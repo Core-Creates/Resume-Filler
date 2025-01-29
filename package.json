@@ -1,0 +1,7 @@
+{
+  "dependencies": {
+    "html": "^1.0.0",
+    "requests": "^0.3.0",
+    "urllib3": "^0.0.1"
+  }
+}
