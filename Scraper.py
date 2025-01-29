@@ -3,8 +3,8 @@ import re
 
 # ********************************** PySimpleGUI - Collect User Info **********************************
 
-# Define the first window's layout
 def create_first_window():
+    """ Collect First & Last Name """
     layout = [
         [sg.Text("What's your first name?")],
         [sg.Input(key="first_name")],
@@ -14,8 +14,8 @@ def create_first_window():
     ]
     return sg.Window('User Info', layout)
 
-# Define the second window for social links
 def next_socials_window():
+    """ Collect Social Media & Personal Links """
     layout = [
         [sg.Text("Enter your LinkedIn URL:")],
         [sg.Input(key="linkedin_url")],
@@ -27,8 +27,44 @@ def next_socials_window():
     ]
     return sg.Window('Social Links', layout)
 
-# Define the third window for entering scrape URLs
+def work_experience_window():
+    """ Collect Work Experience with a Dynamic 'Add Job' Feature """
+    job_experiences = []
+
+    layout = [
+        [sg.Text("Enter your work experience")],
+        [sg.Text("Job Title:"), sg.Input(key="job_title_1")],
+        [sg.Text("Job Description:"), sg.Multiline(size=(50, 5), key="job_description_1")],
+        [sg.Button("➕ Add Job"), sg.Button("Submit")]
+    ]
+
+    window = sg.Window("Work Experience", layout)
+    job_count = 1  # Track job fields dynamically
+
+    while True:
+        event, values = window.read()
+
+        if event in (sg.WIN_CLOSED, "Submit"):
+            break
+
+        if event == "➕ Add Job":
+            job_count += 1
+            window.extend_layout(window, [
+                [sg.Text(f"Job Title {job_count}:"), sg.Input(key=f"job_title_{job_count}")],
+                [sg.Text(f"Job Description {job_count}:"), sg.Multiline(size=(50, 5), key=f"job_description_{job_count}")],
+            ])
+
+    for i in range(1, job_count + 1):
+        title = values.get(f"job_title_{i}", "").strip()
+        description = values.get(f"job_description_{i}", "").strip()
+        if title and description:
+            job_experiences.append((title, description))
+
+    window.close()
+    return job_experiences
+
 def collect_scrape_urls_window():
+    """ Collect List of URLs Dynamically """
     scrape_urls = []
     layout = [
         [sg.Text("Enter URLs to scrape:")],
@@ -36,7 +72,7 @@ def collect_scrape_urls_window():
         [sg.Button("Add URL"), sg.Button("Submit")],
         [sg.Listbox(values=scrape_urls, size=(50, 10), key="url_list", enable_events=True)]
     ]
-    
+
     window = sg.Window("URL Collection", layout)
 
     while True:
@@ -47,28 +83,35 @@ def collect_scrape_urls_window():
             url = values["url_input"].strip()
             if url and re.match(r'^(https?://)?(www\.)?([a-zA-Z0-9-]+)(\.[a-zA-Z]+)+(/.*)?$', url):
                 if not url.startswith("http"):
-                    url = "https://" + url  # Ensure URLs have the correct format
+                    url = "https://" + url
                 scrape_urls.append(url)
                 window["url_list"].update(scrape_urls)
-                window["url_input"].update("")  # Clear input box
+                window["url_input"].update("")
             else:
                 sg.popup_error("Invalid URL! Please enter a valid URL (e.g., https://example.com)")
 
     window.close()
     return scrape_urls
 
-# Define the final window to display collected data
-def display_results_window(first_name, last_name, linkedin_url, personal_website, github_url, scrape_urls):
-    urls_text = "\n".join(scrape_urls) if scrape_urls else "No URLs entered"
+def display_results_window(first_name, last_name, linkedin_url, personal_website, github_url, job_experiences, scrape_urls):
+    """ Display All Collected Data in a Final Summary Window """
+    job_text = "\n\n".join([f"💼 {title}\n   {desc}" for title, desc in job_experiences]) if job_experiences else "No job experience entered"
+    urls_text = "\n".join([f"✅ {url}" for url in scrape_urls]) if scrape_urls else "No URLs entered"
+
     layout = [
-        [sg.Text(f"Name: {first_name} {last_name}", font=("Helvetica", 14))],
-        [sg.Text(f"LinkedIn: {linkedin_url if linkedin_url else 'Not Provided'}")],
-        [sg.Text(f"Website: {personal_website if personal_website else 'Not Provided'}")],
-        [sg.Text(f"GitHub: {github_url if github_url else 'Not Provided'}")],
-        [sg.Text("URLs to Scrape:")],
+        [sg.Text(f"👤 Name: {first_name} {last_name}", font=("Helvetica", 14))],
+        [sg.Text("\n📌 Collected Social Links:")],
+        [sg.Text(f"🔗 LinkedIn: {linkedin_url if linkedin_url else 'Not Provided'}")],
+        [sg.Text(f"🌐 Website: {personal_website if personal_website else 'Not Provided'}")],
+        [sg.Text(f"🐙 GitHub: {github_url if github_url else 'Not Provided'}")],
+        [sg.Text("\n💼 Work Experience:")],
+        [sg.Multiline(job_text, size=(50, 10), disabled=True)],
+        [sg.Text("\n🌍 URLs to Scrape:")],
         [sg.Multiline(urls_text, size=(50, 10), disabled=True)],
+        [sg.Button('submit resume')],
         [sg.Button('Close')]
     ]
+    
     window = sg.Window('Collected Information', layout)
     event, _ = window.read()
     window.close()
@@ -79,7 +122,6 @@ event, values = window.read()
 window.close()
 
 if event in (sg.WIN_CLOSED, None):
-    print("Window closed. Exiting...")
     exit()
 
 first_name = values.get("first_name", "").strip()
@@ -95,15 +137,20 @@ event, values = window.read()
 window.close()
 
 if event in (sg.WIN_CLOSED, None):
-    print("Window closed. Exiting...")
     exit()
 
 linkedin_url = values.get("linkedin_url", "").strip()
 personal_website = values.get("personal_website", "").strip()
 github_url = values.get("github_url", "").strip()
 
-# ********************** Collect Scrape URLs (Third Window) **********************
+# ********************** Work Experience (Third Window) ***************************
+job_experiences = work_experience_window()
+
+# ********************** Collect Scrape URLs (Fourth Window) **********************
 scrape_urls = collect_scrape_urls_window()
 
-# ********************** Display Final Data in a New Window **********************
-display_results_window(first_name, last_name, linkedin_url, personal_website, github_url, scrape_urls)
+# ********************** Display Final Data in a New Window ***********************
+display_results_window(first_name, last_name, linkedin_url, personal_website, github_url, job_experiences, scrape_urls)
+
+# ********************** Scrap the URLs for Job listings ***************************
+
