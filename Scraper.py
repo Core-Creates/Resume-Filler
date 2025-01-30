@@ -1,131 +1,121 @@
+import csv
+import os
+from datetime import datetime
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from webdriver_manager.chrome import ChromeDriverManager
+from selenium import webdriver
 import PySimpleGUI as sg
 import re
-import requests
-from bs4 import BeautifulSoup
+
+# ********************************** CSV Export Function **********************************
+def save_jobs_to_csv(jobs, location):
+    """Saves job listings to a CSV file with a timestamp."""
+    if not jobs:
+        sg.popup("No jobs available to save.")
+        return
+    
+    # Define CSV file path
+    filename = "job_listings.csv"
+    file_exists = os.path.isfile(filename)
+    
+    # Write to CSV
+    with open(filename, mode="a", newline="", encoding="utf-8") as file:
+        writer = csv.writer(file)
+        
+        # Write headers only if file is new
+        if not file_exists:
+            writer.writerow(["Job Title", "Job URL", "Location", "Date Scraped"])
+        
+        # Write job listings
+        for job in jobs:
+            writer.writerow([job["title"], job["link"], location, datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
+    
+    sg.popup(f"✅ Jobs saved successfully to {filename}!")
+
 
 # ********************************** Web Scraping Function **********************************
-
-def scrape_url(url):
-    """Scrapes a URL and extracts the page title and all links."""
+def scrape_search_selenium(url, desired_jobs, location):
+    """Scrapes job listings dynamically from a job search website."""
+    
     try:
-        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
-        response.raise_for_status()  # Raise an error for bad responses (4xx, 5xx)
+        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()))
+    except Exception as e:
+        sg.popup_error(f"Error initializing WebDriver: {e}")
+        return []
 
-        soup = BeautifulSoup(response.text, "html.parser")
+    try:
+        driver.get(url)
+        WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
 
-        title = soup.title.text if soup.title else "No Title Found"
-        links = [a['href'] for a in soup.find_all('a', href=True)]
+        # Handle different job sites (LinkedIn, Indeed, etc.)
+        search_fields = [
+            ('//input[contains(@class, "jobs-search-box__text-input")]', '//input[contains(@class, "jobs-search-box__text-input")][2]'),  # LinkedIn
+            ('//input[@id="text-input-what"]', '//input[@id="text-input-where"]')  # Indeed
+        ]
 
-        return {"title": title, "links": links}
+        search_input, search_location = None, None
+        for search_xpath, location_xpath in search_fields:
+            try:
+                search_input = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.XPATH, search_xpath)))
+                search_location = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.XPATH, location_xpath)))
+                break  
+            except:
+                continue
 
-    except requests.exceptions.RequestException as e:
-        return {"error": str(e)}
+        if not search_input or not search_location:
+            sg.popup_error("Error: Unable to locate search fields. The website structure may have changed.")
+            driver.quit()
+            return []
 
-# ********************************** PySimpleGUI - Collect User Info **********************************
+        search_query = ", ".join(desired_jobs)
+        search_input.send_keys(search_query)
+        search_location.clear()
+        search_location.send_keys(location)
+        search_location.send_keys(Keys.RETURN)
 
-def create_first_window():
-    layout = [
-        [sg.Text("What's your first name?")],
-        [sg.Input(key="first_name")],
-        [sg.Text("What's your last name?")],
-        [sg.Input(key="last_name")],
-        [sg.Button('Next')]
-    ]
-    return sg.Window('User Info', layout)
+        WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.CSS_SELECTOR, ".job-card-container, .job_seen_beacon")))
 
-def next_socials_window():
-    layout = [
-        [sg.Text("Enter your LinkedIn URL:")],
-        [sg.Input(key="linkedin_url")],
-        [sg.Text("Enter your personal website:")],
-        [sg.Input(key="personal_website")],
-        [sg.Text("Enter your GitHub:")],
-        [sg.Input(key="github_url")],
-        [sg.Button('Next')]
-    ]
-    return sg.Window('Social Links', layout)
+        # Extract job listings
+        desired_job_results = []
+        job_elements = driver.find_elements(By.CSS_SELECTOR, ".job-card-container, .job_seen_beacon")
 
-def work_experience_window():
-    job_experiences = []
-    layout = [
-        [sg.Text("Enter your work experience")],
-        [sg.Text("Job Title:"), sg.Input(key="job_title_1")],
-        [sg.Text("Job Description:"), sg.Multiline(size=(50, 5), key="job_description_1")],
-        [sg.Button("➕ Add Job"), sg.Button("Submit")]
-    ]
+        if not job_elements:
+            sg.popup("No job listings found. Try a different search term or check the website.")
+            driver.quit()
+            return []
 
-    window = sg.Window("Work Experience", layout)
-    job_count = 1  
+        for job in job_elements:
+            try:
+                title = job.find_element(By.CSS_SELECTOR, "h2, .job-title").text
+                link = job.find_element(By.CSS_SELECTOR, "a").get_attribute("href")
+                desired_job_results.append({"title": title, "link": link})
+            except Exception as e:
+                print(f"Error extracting job details: {e}")
+                continue  
 
-    while True:
-        event, values = window.read()
+        driver.quit()
+        return desired_job_results  
 
-        if event in (sg.WIN_CLOSED, "Submit"):
-            break
+    except Exception as e:
+        sg.popup_error(f"Scraping Error: {str(e)}")
+        driver.quit()
+        return []
 
-        if event == "➕ Add Job":
-            job_count += 1
-            window.extend_layout(window, [
-                [sg.Text(f"Job Title {job_count}:"), sg.Input(key=f"job_title_{job_count}")],
-                [sg.Text(f"Job Description {job_count}:"), sg.Multiline(size=(50, 5), key=f"job_description_{job_count}")],
-            ])
 
-    for i in range(1, job_count + 1):
-        title = values.get(f"job_title_{i}", "").strip()
-        description = values.get(f"job_description_{i}", "").strip()
-        if title and description:
-            job_experiences.append((title, description))
-
-    window.close()
-    return job_experiences
-
-def collect_scrape_urls_window():
-    scrape_urls = []
-    scraped_data = {}
-
-    layout = [
-        [sg.Text("Enter URLs to scrape:")],
-        [sg.Input(key="url_input")],
-        [sg.Button("Add URL"), sg.Button("Scrape URL"), sg.Button("Submit")],
-        [sg.Listbox(values=scrape_urls, size=(50, 10), key="url_list", enable_events=True)],
-        [sg.Multiline("", size=(50, 5), key="scrape_output", disabled=True)]
-    ]
-
-    window = sg.Window("URL Collection", layout)
-
-    while True:
-        event, values = window.read()
-        if event in (sg.WIN_CLOSED, "Submit"):
-            break
-        if event == "Add URL":
-            url = values["url_input"].strip()
-            if url and re.match(r'^(https?://)?(www\.)?([a-zA-Z0-9-]+)(\.[a-zA-Z]+)+(/.*)?$', url):
-                if not url.startswith("http"):
-                    url = "https://" + url
-                scrape_urls.append(url)
-                window["url_list"].update(scrape_urls)
-                window["url_input"].update("")
-            else:
-                sg.popup_error("Invalid URL! Please enter a valid URL (e.g., https://example.com)")
-
-        if event == "Scrape URL":
-            url = values["url_input"].strip()
-            if url:
-                data = scrape_url(url)
-                scraped_data[url] = data
-                window["scrape_output"].update(f"Title: {data.get('title', 'N/A')}\nLinks Found: {len(data.get('links', []))}")
-
-    window.close()
-    return scrape_urls, scraped_data
-
-def display_results_window(first_name, last_name, linkedin_url, personal_website, github_url, job_experiences, scrape_urls, scraped_data):
-    job_text = "\n\n".join([f"💼 {title}\n   {desc}" for title, desc in job_experiences]) if job_experiences else "No job experience entered"
+# ********************************** PySimpleGUI Windows **********************************
+def display_results_window(first_name, last_name, linkedin_url, personal_website, github_url, job_experiences, scrape_urls, scraped_data, jobs, location):
+    """Displays results including job search results and allows saving to CSV."""
+    job_text = "\n\n".join([f"💼 {title}\n  {location}\n {desc}" for title, location, desc in job_experiences]) if job_experiences else "No job experience entered"
     urls_text = "\n".join([f"✅ {url}" for url in scrape_urls]) if scrape_urls else "No URLs entered"
     scrape_results_text = "\n\n".join([f"🔗 {url}\n📌 Title: {data.get('title', 'N/A')}\n🔗 Links Found: {len(data.get('links', []))}" for url, data in scraped_data.items()]) if scraped_data else "No scraping results."
+    job_results_text = "\n\n".join([f"🔍 {job['title']}\n🔗 {job['link']}" for job in jobs]) if jobs else "No jobs found."
 
     layout = [
         [sg.Text(f"👤 Name: {first_name} {last_name}", font=("Helvetica", 14))],
-        [sg.Text("\n📌 Collected Social Links:")],
         [sg.Text(f"🔗 LinkedIn: {linkedin_url if linkedin_url else 'Not Provided'}")],
         [sg.Text(f"🌐 Website: {personal_website if personal_website else 'Not Provided'}")],
         [sg.Text(f"🐙 GitHub: {github_url if github_url else 'Not Provided'}")],
@@ -135,45 +125,47 @@ def display_results_window(first_name, last_name, linkedin_url, personal_website
         [sg.Multiline(urls_text, size=(50, 10), disabled=True)],
         [sg.Text("\n🔍 Scraping Results:")],
         [sg.Multiline(scrape_results_text, size=(50, 10), disabled=True)],
-        [sg.Button('Submit Resume'), sg.Button('Close')]
+        [sg.Text("\n📢 Job Search Results:")],
+        [sg.Multiline(job_results_text, size=(50, 10), disabled=True)],  # Display job results
+        [sg.Button('Save to CSV'), sg.Button('Submit Resume'), sg.Button('Close')]
     ]
     
     window = sg.Window('Collected Information', layout)
-    event, _ = window.read()
+    
+    while True:
+        event, _ = window.read()
+        if event in (sg.WIN_CLOSED, "Close"):
+            break
+        if event == "Save to CSV":
+            save_jobs_to_csv(jobs, location)  # Save to CSV when button is clicked
+
     window.close()
 
-# ********************** Collect User Info (First Window) **********************
-window = create_first_window()
-event, values = window.read()
-window.close()
 
-if event in (sg.WIN_CLOSED, None):
+# ********************************** Execution Flow **********************************
+# Ask user for job search URL
+job_search_url = sg.popup_get_text("Enter the job search website URL:", default_text="https://www.linkedin.com/jobs/")
+
+# Validate URL
+url_pattern = re.compile(r'^(https?://)?(www\.)?([a-zA-Z0-9-]+)\.(com|org|net|edu|gov)(/.*)?$', re.IGNORECASE)
+if not job_search_url or not url_pattern.match(job_search_url):
+    sg.popup_error("Invalid URL! Please enter a valid job search website URL.")
     exit()
 
-first_name = values.get("first_name", "").strip()
-last_name = values.get("last_name", "").strip()
+# Ask user for job location
+location = sg.popup_get_text("Enter job location:", default_text="Remote") or "Remote"
 
-if not first_name or not last_name:
-    sg.popup_error("Error: First and last names cannot be empty.")
+# Ensure user enters at least one job title before scraping
+if not desired_jobs:
+    sg.popup_error("You must enter at least one job title to search.")
     exit()
 
-# ********************** Collect Social Links (Second Window) **********************
-window = next_socials_window()
-event, values = window.read()
-window.close()
+# Call `scrape_search_selenium()`
+jobs = scrape_search_selenium(job_search_url, desired_jobs, location)
 
-if event in (sg.WIN_CLOSED, None):
-    exit()
+# Show popup if no jobs are found
+if not jobs:
+    sg.popup("No jobs found for the given search criteria.")
 
-linkedin_url = values.get("linkedin_url", "").strip()
-personal_website = values.get("personal_website", "").strip()
-github_url = values.get("github_url", "").strip()
-
-# ********************** Work Experience (Third Window) **********************
-job_experiences = work_experience_window()
-
-# ********************** Collect Scrape URLs (Fourth Window) **********************
-scrape_urls, scraped_data = collect_scrape_urls_window()
-
-# ********************** Display Final Data in a New Window **********************
-display_results_window(first_name, last_name, linkedin_url, personal_website, github_url, job_experiences, scrape_urls, scraped_data)
+# Final Display
+display_results_window(first_name, last_name, linkedin_url, personal_website, github_url, job_experiences, scrape_urls, scraped_data, jobs, location)
