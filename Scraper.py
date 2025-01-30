@@ -1,171 +1,201 @@
-import csv
 import os
+import re
+import time
+import csv
+import pdfplumber
 from datetime import datetime
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.edge.service import Service as EdgeService
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
+from webdriver_manager.microsoft import EdgeChromiumDriverManager
 from selenium import webdriver
 import PySimpleGUI as sg
-import re
+from dotenv import load_dotenv
 
-# ********************************** CSV Export Function **********************************
-def save_jobs_to_csv(jobs, location):
-    """Saves job listings to a CSV file with a timestamp."""
-    if not jobs:
-        sg.popup("No jobs available to save.")
-        return
-    
-    # Define CSV file path
-    filename = "job_listings.csv"
-    file_exists = os.path.isfile(filename)
-    
-    # Write to CSV
-    with open(filename, mode="a", newline="", encoding="utf-8") as file:
-        writer = csv.writer(file)
-        
-        # Write headers only if file is new
-        if not file_exists:
-            writer.writerow(["Job Title", "Job URL", "Location", "Date Scraped"])
-        
-        # Write job listings
-        for job in jobs:
-            writer.writerow([job["title"], job["link"], location, datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
-    
-    sg.popup(f"✅ Jobs saved successfully to {filename}!")
+# Load environment variables
+load_dotenv()
 
+# ********************************** Safe Popup **********************************
+def safe_popup(message):
+    """Ensures pop-ups do not block the script execution."""
+    sg.popup_no_wait(message)
 
-# ********************************** Web Scraping Function **********************************
-def scrape_search_selenium(url, desired_jobs, location):
-    """Scrapes job listings dynamically from a job search website."""
-    
+# ********************************** Login Function **********************************
+def login_to_job_site(driver, login_url, username, password):
+    """Logs into the job search site using provided credentials."""
+    driver.get(login_url)
+    time.sleep(3)  # Allow time for page load
+
+    # Possible login fields across different job sites
+    login_fields = [
+        {"user": "//input[@id='session_key' or @name='username']", "pass": "//input[@id='session_password' or @name='password']"},
+        {"user": "//input[@type='email']", "pass": "//input[@type='password']"},
+        {"user": "//input[contains(@name, 'email')]", "pass": "//input[contains(@name, 'password')]"},
+    ]
+
+    for fields in login_fields:
+        try:
+            username_input = WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, fields["user"])))
+            password_input = WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, fields["pass"])))
+            login_button = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.XPATH, "//button[@type='submit' or contains(text(), 'Sign in')]")))
+
+            username_input.clear()
+            password_input.clear()
+
+            username_input.send_keys(username)
+            password_input.send_keys(password)
+            login_button.click()
+            
+            time.sleep(5)  # Wait for login attempt
+            if "login" not in driver.current_url.lower():
+                safe_popup("✅ Login successful!")
+                return True
+        except:
+            continue
+
+    safe_popup("⚠️ Login failed! Check your credentials and try again.")
+    return False
+
+# ********************************** Resume Parsing **********************************
+def extract_resume_data(resume_path):
+    """Extracts key details from the user's resume (Name, Email, Phone, Job History)."""
+    user_data = {"first_name": "", "last_name": "", "email": "", "phone": "", "job_history": []}
+
     try:
-        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()))
+        with pdfplumber.open(resume_path) as pdf:
+            text = "\n".join(page.extract_text() for page in pdf.pages if page.extract_text())
+
+        # Extract Email
+        email_match = re.search(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", text)
+        user_data["email"] = email_match.group(0) if email_match else ""
+
+        # Extract Phone Number
+        phone_match = re.search(r"(\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})", text)
+        user_data["phone"] = phone_match.group(0) if phone_match else ""
+
+        # Extract Name (Handles Multi-Part Names)
+        name_lines = text.split("\n")[:5]
+        name_match = re.search(r"([A-Z][a-z]+(?: [A-Z][a-z]+)*) ([A-Z][a-z]+)", " ".join(name_lines))
+        if name_match:
+            user_data["first_name"], user_data["last_name"] = name_match.groups()
+
+        # Extract Job History
+        job_matches = re.findall(r"([A-Za-z\s]+),\s([A-Za-z\s]+),\s(\d{4}[-–]\d{4}|\d{4}-Present)", text)
+        user_data["job_history"] = [{"company": job[0], "role": job[1], "dates": job[2]} for job in job_matches]
+
     except Exception as e:
-        sg.popup_error(f"Error initializing WebDriver: {e}")
-        return []
+        safe_popup(f"❌ Error reading resume: {e}")
 
+    return user_data
+
+# ********************************** Apply to Job **********************************
+def apply_to_job(driver, job_link, user_data, resume_path):
+    """Automates the job application process using extracted resume data."""
     try:
-        driver.get(url)
-        WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+        driver.get(job_link)
+        time.sleep(3)
 
-        # Handle different job sites (LinkedIn, Indeed, etc.)
-        search_fields = [
-            ('//input[contains(@class, "jobs-search-box__text-input")]', '//input[contains(@class, "jobs-search-box__text-input")][2]'),  # LinkedIn
-            ('//input[@id="text-input-what"]', '//input[@id="text-input-where"]')  # Indeed
+        apply_buttons = [
+            '//button[contains(text(), "Apply Now")]',
+            '//button[contains(text(), "Quick Apply")]',
+            '//a[contains(text(), "Apply")]'
         ]
 
-        search_input, search_location = None, None
-        for search_xpath, location_xpath in search_fields:
+        for xpath in apply_buttons:
             try:
-                search_input = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.XPATH, search_xpath)))
-                search_location = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.XPATH, location_xpath)))
-                break  
+                apply_button = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.XPATH, xpath)))
+                apply_button.click()
+                time.sleep(2)
+                break
             except:
                 continue
 
-        if not search_input or not search_location:
-            sg.popup_error("Error: Unable to locate search fields. The website structure may have changed.")
-            driver.quit()
-            return []
+        # Submit application
+        submit_buttons = [
+            '//button[contains(text(), "Submit")]',
+            '//button[contains(text(), "Finish")]',
+            '//button[contains(text(), "Send Application")]'
+        ]
 
-        search_query = ", ".join(desired_jobs)
-        search_input.send_keys(search_query)
-        search_location.clear()
-        search_location.send_keys(location)
-        search_location.send_keys(Keys.RETURN)
-
-        WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.CSS_SELECTOR, ".job-card-container, .job_seen_beacon")))
-
-        # Extract job listings
-        desired_job_results = []
-        job_elements = driver.find_elements(By.CSS_SELECTOR, ".job-card-container, .job_seen_beacon")
-
-        if not job_elements:
-            sg.popup("No job listings found. Try a different search term or check the website.")
-            driver.quit()
-            return []
-
-        for job in job_elements:
+        for xpath in submit_buttons:
             try:
-                title = job.find_element(By.CSS_SELECTOR, "h2, .job-title").text
-                link = job.find_element(By.CSS_SELECTOR, "a").get_attribute("href")
-                desired_job_results.append({"title": title, "link": link})
-            except Exception as e:
-                print(f"Error extracting job details: {e}")
-                continue  
+                submit_button = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.XPATH, xpath)))
+                submit_button.click()
+                safe_popup("✅ Application Submitted Successfully!")
+                return True
+            except:
+                continue
 
-        driver.quit()
-        return desired_job_results  
+        safe_popup("⚠️ Could not submit the application.")
+        return False
 
     except Exception as e:
-        sg.popup_error(f"Scraping Error: {str(e)}")
-        driver.quit()
-        return []
+        safe_popup(f"❌ Failed to apply: {e}")
+        return False
 
+# ********************************** Scrape & Apply **********************************
+def scrape_and_apply(login_url, job_search_url, desired_jobs, location, resume_path, username, password):
+    """Logs in, scrapes jobs, and applies automatically."""
+    driver = webdriver.Edge(service=EdgeService(EdgeChromiumDriverManager().install()))
 
-# ********************************** PySimpleGUI Windows **********************************
-def display_results_window(first_name, last_name, linkedin_url, personal_website, github_url, job_experiences, scrape_urls, scraped_data, jobs, location):
-    """Displays results including job search results and allows saving to CSV."""
-    job_text = "\n\n".join([f"💼 {title}\n  {location}\n {desc}" for title, location, desc in job_experiences]) if job_experiences else "No job experience entered"
-    urls_text = "\n".join([f"✅ {url}" for url in scrape_urls]) if scrape_urls else "No URLs entered"
-    scrape_results_text = "\n\n".join([f"🔗 {url}\n📌 Title: {data.get('title', 'N/A')}\n🔗 Links Found: {len(data.get('links', []))}" for url, data in scraped_data.items()]) if scraped_data else "No scraping results."
-    job_results_text = "\n\n".join([f"🔍 {job['title']}\n🔗 {job['link']}" for job in jobs]) if jobs else "No jobs found."
-
-    layout = [
-        [sg.Text(f"👤 Name: {first_name} {last_name}", font=("Helvetica", 14))],
-        [sg.Text(f"🔗 LinkedIn: {linkedin_url if linkedin_url else 'Not Provided'}")],
-        [sg.Text(f"🌐 Website: {personal_website if personal_website else 'Not Provided'}")],
-        [sg.Text(f"🐙 GitHub: {github_url if github_url else 'Not Provided'}")],
-        [sg.Text("\n💼 Work Experience:")],
-        [sg.Multiline(job_text, size=(50, 10), disabled=True)],
-        [sg.Text("\n🌍 URLs to Scrape:")],
-        [sg.Multiline(urls_text, size=(50, 10), disabled=True)],
-        [sg.Text("\n🔍 Scraping Results:")],
-        [sg.Multiline(scrape_results_text, size=(50, 10), disabled=True)],
-        [sg.Text("\n📢 Job Search Results:")],
-        [sg.Multiline(job_results_text, size=(50, 10), disabled=True)],  # Display job results
-        [sg.Button('Save to CSV'), sg.Button('Submit Resume'), sg.Button('Close')]
-    ]
-    
-    window = sg.Window('Collected Information', layout)
-    
-    while True:
-        event, _ = window.read()
-        if event in (sg.WIN_CLOSED, "Close"):
+    # Login first
+    login_attempts = 3
+    for attempt in range(login_attempts):
+        if login_to_job_site(driver, login_url, username, password):
             break
-        if event == "Save to CSV":
-            save_jobs_to_csv(jobs, location)  # Save to CSV when button is clicked
+        elif attempt == login_attempts - 1:
+            safe_popup("❌ Login failed after multiple attempts. Exiting.")
+            driver.quit()
+            return
 
-    window.close()
+    driver.get(job_search_url)
+    search_input = WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, "//input[@type='text']")))
+    location_input = WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, "//input[@name='l' or @id='location']")))
+    
+    search_input.send_keys(", ".join(desired_jobs))
+    location_input.send_keys(location)
+    location_input.send_keys(Keys.RETURN)
+    
+    time.sleep(5)
+    job_results = []
 
+    for _ in range(3):
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(3)
 
-# ********************************** Execution Flow **********************************
-# Ask user for job search URL
-job_search_url = sg.popup_get_text("Enter the job search website URL:", default_text="https://www.linkedin.com/jobs/")
+    job_elements = driver.find_elements(By.CSS_SELECTOR, ".job_seen_beacon, .job-card-container")
 
-# Validate URL
-url_pattern = re.compile(r'^(https?://)?(www\.)?([a-zA-Z0-9-]+)\.(com|org|net|edu|gov)(/.*)?$', re.IGNORECASE)
-if not job_search_url or not url_pattern.match(job_search_url):
-    sg.popup_error("Invalid URL! Please enter a valid job search website URL.")
-    exit()
+    for job in job_elements:
+        try:
+            title = job.find_element(By.TAG_NAME, "h2").text
+            link = job.find_element(By.TAG_NAME, "a").get_attribute("href")
+            job_results.append({"title": title, "link": link})
+        except:
+            continue
 
-# Ask user for job location
-location = sg.popup_get_text("Enter job location:", default_text="Remote") or "Remote"
+    safe_popup(f"✅ {len(job_results)} jobs found! Starting applications...")
 
-# Ensure user enters at least one job title before scraping
-if not desired_jobs:
-    sg.popup_error("You must enter at least one job title to search.")
-    exit()
+    user_data = extract_resume_data(resume_path)
 
-# Call `scrape_search_selenium()`
-jobs = scrape_search_selenium(job_search_url, desired_jobs, location)
+    for job in job_results:
+        apply_to_job(driver, job["link"], user_data, resume_path)
 
-# Show popup if no jobs are found
-if not jobs:
-    sg.popup("No jobs found for the given search criteria.")
+    driver.quit()
 
-# Final Display
-display_results_window(first_name, last_name, linkedin_url, personal_website, github_url, job_experiences, scrape_urls, scraped_data, jobs, location)
+# ********************************** Execution **********************************
+if __name__ == "__main__":
+    safe_popup("Starting automated job application process...")
+
+    username, password = "testuser@example.com", "password123"  # Replace with actual user input
+
+    scrape_and_apply(
+        "https://www.linkedin.com/login",
+        "https://www.linkedin.com/jobs/",
+        ["Software Engineer"],
+        "Remote",
+        "resume.pdf",
+        username,
+        password
+    )
