@@ -26,6 +26,18 @@ logger = logging.getLogger(__name__)
 # Controls that never hold candidate data.
 IGNORED_INPUT_TYPES = {"hidden", "submit", "button", "reset", "image"}
 
+# Native controls plus scripted dropdowns. React, Ant Design and Select2 render
+# a combobox as a div, so restricting the scan to input/select/textarea misses
+# them entirely and the engine reports the field as unrecognised.
+#
+# Shared by both adapters so the static and live scans cannot disagree about
+# what counts as a control.
+CONTROL_SELECTOR = (
+    "input, select, textarea, [role='combobox'], [role='listbox'], [aria-haspopup='listbox']"
+)
+
+MAX_FRAME_DEPTH = 3
+
 
 def _clean(text: Any) -> str:
     """Collapse whitespace. Accepts anything, because BeautifulSoup attribute
@@ -95,13 +107,49 @@ def _label_for_html(element: Tag, soup: BeautifulSoup, field_type: str = "") -> 
     return ""
 
 
+def _is_combobox_tag(element: Tag) -> bool:
+    """Whether a non-native element is a scripted dropdown."""
+    if element.name in {"input", "select", "textarea"}:
+        return str(element.get("role", "")).lower() == "combobox"
+    role = str(element.get("role", "")).lower()
+    if role in {"combobox", "listbox"}:
+        return True
+    return str(element.get("aria-haspopup", "")).lower() == "listbox"
+
+
+def _combobox_options(element: Tag) -> list[str]:
+    """Option text for a scripted dropdown, which lives in a sibling listbox."""
+    listbox: Tag | None = None
+    if str(element.get("role", "")).lower() == "listbox":
+        listbox = element
+    elif element.parent is not None:
+        listbox = element.parent.select_one("[role='listbox']")
+    if listbox is None:
+        return []
+    return [_clean(option.get_text(" ")) for option in listbox.select("[role='option']")]
+
+
 def fields_from_html(html: str) -> list[FormField]:
-    """Extract every fillable control from an HTML document."""
+    """Extract every fillable control from an HTML document.
+
+    Scripted dropdowns are included alongside native controls, because an ATS
+    that renders its selects as divs would otherwise look like a form with
+    missing fields.
+    """
     soup = BeautifulSoup(html, "html.parser")
     fields: list[FormField] = []
 
-    for element in soup.find_all(["input", "select", "textarea"]):
+    # The same selector the Selenium adapter uses, so the two adapters cannot
+    # drift apart on which elements count as controls.
+    for element in soup.select(CONTROL_SELECTOR):
         tag = element.name
+        combobox = _is_combobox_tag(element)
+        if tag not in {"input", "select", "textarea"} and not combobox:
+            continue
+        # A <ul role="listbox"> is the option container, not a control.
+        if tag in {"ul", "ol"} and combobox:
+            continue
+
         field_type = str(element.get("type", "text")).lower() if tag == "input" else tag
         if tag == "input" and field_type in IGNORED_INPUT_TYPES:
             continue
@@ -109,6 +157,8 @@ def fields_from_html(html: str) -> list[FormField]:
         options: list[str] = []
         if tag == "select":
             options = [_clean(opt.get_text(" ")) for opt in element.find_all("option")]
+        elif combobox:
+            options = _combobox_options(element)
         elif field_type in {"radio", "checkbox"}:
             # The wrapping label is this option's own text, for example "Yes".
             own_label = element.find_parent("label")
@@ -128,6 +178,7 @@ def fields_from_html(html: str) -> list[FormField]:
                 required=element.has_attr("required")
                 or str(element.get("aria-required", "")).lower() == "true",
                 options=options,
+                widget="combobox" if combobox else "native",
                 handle=element,
             )
         )
@@ -172,20 +223,33 @@ return legendText();
 """
 
 
-def fields_from_driver(driver: Any) -> list[FormField]:
-    """Extract every visible fillable control from a live Selenium page.
+def switch_to_frame_path(driver: Any, path: tuple[int, ...]) -> None:
+    """Move the driver into the browsing context identified by ``path``.
 
-    Invisible controls are skipped because a human applicant cannot fill them
-    either, and attempting to do so is a reliable way to raise
-    ``ElementNotInteractableException``.
+    Always re-walks from the top document, because there is no reliable way to
+    ask Selenium where it currently is.
     """
+    driver.switch_to.default_content()
+    for index in path:
+        driver.switch_to.frame(index)
+
+
+def _is_combobox(element: Any, tag: str) -> bool:
+    role = (element.get_attribute("role") or "").lower()
+    if tag in {"select", "textarea"}:
+        return False
+    if role in {"combobox", "listbox"}:
+        return True
+    return (element.get_attribute("aria-haspopup") or "").lower() == "listbox"
+
+
+def _scan_context(driver: Any, path: tuple[int, ...]) -> list[FormField]:
+    """Collect controls in the browsing context the driver is currently in."""
     from selenium.common.exceptions import StaleElementReferenceException, WebDriverException
     from selenium.webdriver.common.by import By
 
     fields: list[FormField] = []
-    elements = driver.find_elements(By.CSS_SELECTOR, "input, select, textarea")
-
-    for element in elements:
+    for element in driver.find_elements(By.CSS_SELECTOR, CONTROL_SELECTOR):
         try:
             tag = element.tag_name.lower()
             field_type = (element.get_attribute("type") or "text").lower()
@@ -194,6 +258,10 @@ def fields_from_driver(driver: Any) -> list[FormField]:
             # File inputs are routinely hidden behind a styled button, so they
             # are the one control we accept while not displayed.
             if not element.is_displayed() and field_type != "file":
+                continue
+
+            combobox = _is_combobox(element, tag)
+            if tag not in {"input", "select", "textarea"} and not combobox:
                 continue
 
             try:
@@ -221,6 +289,8 @@ def fields_from_driver(driver: Any) -> list[FormField]:
                     required=bool(element.get_attribute("required"))
                     or (element.get_attribute("aria-required") or "").lower() == "true",
                     options=options,
+                    frame_path=path,
+                    widget="combobox" if combobox else "native",
                     handle=element,
                 )
             )
@@ -228,4 +298,53 @@ def fields_from_driver(driver: Any) -> list[FormField]:
             logger.debug("Skipped a stale element while scanning the form")
             continue
 
+    return fields
+
+
+def fields_from_driver(driver: Any, max_depth: int = MAX_FRAME_DEPTH) -> list[FormField]:
+    """Extract every visible fillable control, descending into nested iframes.
+
+    Invisible controls are skipped because a human applicant cannot fill them
+    either, and attempting to do so is a reliable way to raise
+    ``ElementNotInteractableException``.
+
+    The driver is left in the top document when this returns.
+    """
+    from selenium.common.exceptions import WebDriverException
+    from selenium.webdriver.common.by import By
+
+    fields: list[FormField] = []
+
+    def scan(path: tuple[int, ...]) -> None:
+        fields.extend(_scan_context(driver, path))
+        if len(path) >= max_depth:
+            return
+        frame_count = len(driver.find_elements(By.CSS_SELECTOR, "iframe, frame"))
+        for index in range(frame_count):
+            try:
+                switch_to_frame_path(driver, path)
+                driver.switch_to.frame(index)
+            except WebDriverException:
+                logger.debug("Could not enter frame %d at path %s", index, path)
+                continue
+            try:
+                scan((*path, index))
+            except WebDriverException:
+                # A cross-origin frame denies access. That is expected, not fatal.
+                logger.debug("Skipped inaccessible frame %d at path %s", index, path)
+
+    try:
+        switch_to_frame_path(driver, ())
+        scan(())
+    finally:
+        try:
+            driver.switch_to.default_content()
+        except WebDriverException:
+            logger.debug("Could not return to the top document", exc_info=True)
+
+    logger.info(
+        "Scanned %d control(s) across %d browsing context(s)",
+        len(fields),
+        len({field.frame_path for field in fields}) or 1,
+    )
     return fields
