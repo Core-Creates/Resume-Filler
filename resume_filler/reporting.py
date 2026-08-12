@@ -48,10 +48,49 @@ def render_resume_summary(resume: ResumeData) -> str:
     return "\n".join(lines)
 
 
+def _collapse_empty_group_rows(matches: list[FieldMatch]) -> tuple[list[FieldMatch], list[str]]:
+    """Fold repeating rows that received nothing into a one-line note.
+
+    Workday renders ten blank work-history rows regardless of how many jobs you
+    have. Listing every field of every unused row buries the real output under
+    forty lines of noise, so an entirely empty row is summarised instead.
+    """
+    empty_rows: dict[str, list[int]] = {}
+    for match in matches:
+        field = match.form_field
+        if not field.is_grouped:
+            continue
+        key = (field.group, field.group_index)
+        rows = [m for m in matches if (m.form_field.group, m.form_field.group_index) == key]
+        if all(m.status is not FillStatus.FILLED for m in rows):
+            empty_rows.setdefault(field.group, [])
+            if field.group_index not in empty_rows[field.group]:
+                empty_rows[field.group].append(field.group_index)
+
+    if not empty_rows:
+        return matches, []
+
+    hidden = {(g, i) for g, rows in empty_rows.items() for i in rows}
+    kept = [
+        m
+        for m in matches
+        if not (
+            m.form_field.is_grouped and (m.form_field.group, m.form_field.group_index) in hidden
+        )
+    ]
+    notes = [
+        f"  {len(rows)} unused {group} row(s) on the form had no matching resume entry."
+        for group, rows in sorted(empty_rows.items())
+    ]
+    return kept, notes
+
+
 def render_plan(matches: list[FieldMatch]) -> str:
     """A table of every control on the form and what the engine decided."""
     if not matches:
         return "No fillable controls were found on this page."
+
+    matches, group_notes = _collapse_empty_group_rows(matches)
 
     header = f"  {'':6} {'FIELD':<34} {'MAPPED TO':<20} {'CONF':>5}  VALUE"
     lines = [header, "  " + "-" * 92]
@@ -72,6 +111,9 @@ def render_plan(matches: list[FieldMatch]) -> str:
         )
 
     lines.append("")
+    lines.extend(group_notes)
+    if group_notes:
+        lines.append("")
     lines.append(
         "  [FILL] ready   [YOU ] your call   [GAP ] missing from resume   "
         "[----] unrecognised   * required"

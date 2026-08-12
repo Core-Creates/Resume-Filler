@@ -378,7 +378,7 @@ def extract_positions(lines: list[str]) -> list[Position]:
         following = lines[index + 1].strip(" ,|•-\t") if index + 1 < len(lines) else ""
 
         parts = [p.strip() for p in re.split(r"\s*[,|]\s*|\s{2,}|\s+at\s+", remainder) if p.strip()]
-        title, company = "", ""
+        title, company, location = "", "", ""
         if len(parts) >= 2:
             # One resume can mix both layouts:
             #   "Employer, City, State      Dates"  with the title on the next line
@@ -387,8 +387,12 @@ def extract_positions(lines: list[str]) -> list[Position]:
             # rather than assuming a fixed column order.
             if not _is_role_title(parts[0]) and _could_be_title(following):
                 company, title = parts[0], following
+                # Whatever trails the employer on that line is its location:
+                # "ManTech, San Antonio, Texas" leaves "San Antonio, Texas".
+                location = ", ".join(parts[1:])
             else:
                 title, company = parts[0], parts[1]
+                location = ", ".join(parts[2:])
         elif len(parts) == 1:
             # "ManTech, San Antonio, Texas   Jul 2021 to May 2022" with the job
             # title on the line below is a common layout, and reading the title
@@ -408,11 +412,37 @@ def extract_positions(lines: list[str]) -> list[Position]:
             Position(
                 company=company,
                 title=title,
+                location=location,
                 start_date=match.group("start"),
                 end_date="Present" if end.lower() in {"present", "current", "now"} else end,
+                description=_description_after(lines, index, title),
             )
         )
     return positions
+
+
+# A page footer sits in the middle of the extracted text and is not prose.
+PAGE_FOOTER_RE = re.compile(r"^\s*page\s*\d+\s*(?:[|/]\s*\d+)?\s*$", re.I)
+
+
+def _description_after(lines: list[str], date_index: int, title: str) -> str:
+    """Collect the prose and bullets belonging to one role.
+
+    Runs from just after the date line to the next date line. Workday and most
+    ATS ask for a role description, and the text is sitting right there in the
+    resume; discarding it leaves a required field empty for no reason.
+    """
+    collected: list[str] = []
+    for line in lines[date_index + 1 :]:
+        if DATE_RANGE_RE.search(line):
+            break
+        text = line.strip()
+        if not text or PAGE_FOOTER_RE.match(text):
+            continue
+        if text == title.strip():
+            continue
+        collected.append(text)
+    return "\n".join(collected).strip()
 
 
 def _school_from_line(line: str) -> str:
@@ -457,7 +487,17 @@ def extract_education(lines: list[str]) -> list[Education]:
             if years:
                 current.graduation_year = max(years)
 
-    return [entry for entry in entries if entry.school or entry.degree]
+    # De-duplicate across the whole list, not just against the previous entry.
+    # A real resume repeated the same school and degree further down the
+    # section, which then filled two Workday education rows with identical text.
+    unique: list[Education] = []
+    for entry in entries:
+        if not (entry.school or entry.degree):
+            continue
+        if any((e.school, e.degree) == (entry.school, entry.degree) for e in unique):
+            continue
+        unique.append(entry)
+    return unique
 
 
 def extract_skills(lines: list[str]) -> list[str]:

@@ -38,6 +38,7 @@ class Position:
 
     company: str = ""
     title: str = ""
+    location: str = ""
     start_date: str = ""
     end_date: str = ""
     description: str = ""
@@ -127,6 +128,17 @@ class FormField:
     autocomplete: str = ""
     required: bool = False
     options: list[str] = field(default_factory=list)
+    group: str = ""
+    """Name of the repeating section this control belongs to, if any.
+
+    Workday's work history is a repeating group: workExperience-1--jobTitle,
+    workExperience-2--jobTitle, and so on. Without this the engine treats the
+    second "Job Title" as a duplicate of the first and fills only one row.
+    """
+
+    group_index: int = -1
+    """Zero-based position of this control's row within its group."""
+
     frame_path: tuple[int, ...] = ()
     """Indices of the nested iframes this control lives in, from the top document.
 
@@ -158,6 +170,11 @@ class FormField:
     def is_combobox(self) -> bool:
         """A scripted dropdown. Typing into one leaves the value uncommitted."""
         return self.widget == "combobox"
+
+    @property
+    def is_grouped(self) -> bool:
+        """Whether this control belongs to a repeating section."""
+        return bool(self.group) and self.group_index >= 0
 
     def describe(self) -> str:
         """Human readable identifier used in logs and review output."""
