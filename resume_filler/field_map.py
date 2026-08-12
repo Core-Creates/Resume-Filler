@@ -395,7 +395,116 @@ CANONICAL_FIELDS: tuple[CanonicalField, ...] = (
     ),
 )
 
-_BY_NAME: dict[str, CanonicalField] = {f.name: f for f in CANONICAL_FIELDS}
+# Fields that only exist inside a repeating section. Workday's work history is
+# ten identical rows, so "Job Title" in row three means the third job, not a
+# duplicate of the first. These are matched only against grouped controls, which
+# keeps them from competing with the flat-form canonicals above.
+ENTRY_FIELDS: tuple[CanonicalField, ...] = (
+    CanonicalField(
+        name="entry_title",
+        patterns=(
+            (r"\bjob\s*title\b", 1.0),
+            (r"\bposition\s*title\b", 1.0),
+            (r"^title$", 0.90),
+            (r"\brole\b", 0.85),
+        ),
+        negatives=(r"\bsalutation\b", r"\bprefix\b"),
+    ),
+    CanonicalField(
+        name="entry_company",
+        patterns=(
+            (r"\bcompany\s*name\b", 1.0),
+            (r"\bemployer\b", 1.0),
+            (r"^company$", 0.95),
+            (r"\borganization\b", 0.85),
+        ),
+    ),
+    CanonicalField(
+        name="entry_location",
+        patterns=(
+            (r"^location$", 1.0),
+            (r"\bcity\b", 0.85),
+        ),
+    ),
+    CanonicalField(
+        name="entry_description",
+        patterns=(
+            (r"\brole\s*description\b", 1.0),
+            (r"\bdescription\b", 0.90),
+            (r"\bresponsibilities\b", 0.90),
+        ),
+    ),
+    CanonicalField(
+        name="entry_start_month",
+        patterns=((r"\bfrom\s*month\b", 1.0), (r"\bstart\s*date\s*month\b", 1.0)),
+    ),
+    CanonicalField(
+        name="entry_start_year",
+        patterns=((r"\bfrom\s*year\b", 1.0), (r"\bstart\s*date\s*year\b", 1.0)),
+    ),
+    CanonicalField(
+        name="entry_end_month",
+        patterns=((r"\bto\s*month\b", 1.0), (r"\bend\s*date\s*month\b", 1.0)),
+    ),
+    CanonicalField(
+        name="entry_end_year",
+        patterns=((r"\bto\s*year\b", 1.0), (r"\bend\s*date\s*year\b", 1.0)),
+    ),
+    CanonicalField(
+        name="entry_currently_here",
+        patterns=(
+            (r"\bcurrently\s*work\s*here\b", 1.0),
+            (r"\bi\s*currently\s*work\b", 1.0),
+            (r"\bpresent\b", 0.80),
+        ),
+    ),
+    CanonicalField(
+        name="entry_school",
+        patterns=(
+            (r"\bschool\s*name\b", 1.0),
+            (r"\bschool\b", 0.95),
+            (r"\buniversity\b", 0.95),
+            (r"\bcollege\b", 0.90),
+            (r"\binstitution\b", 0.90),
+        ),
+    ),
+    CanonicalField(
+        name="entry_degree",
+        patterns=((r"\bdegree\b", 1.0), (r"\bqualification\b", 0.85)),
+    ),
+    CanonicalField(
+        name="entry_field_of_study",
+        patterns=(
+            (r"\bfield\s*of\s*study\b", 1.0),
+            (r"\bmajor\b", 0.95),
+            (r"\bdiscipline\b", 0.90),
+        ),
+    ),
+    CanonicalField(
+        name="entry_gpa",
+        patterns=((r"\bgrade\s*average\b", 1.0), (r"\bgpa\b", 1.0)),
+        policy=FillPolicy.REVIEW_ONLY,
+        note="Verify against your transcript before entering.",
+    ),
+)
+
+# Group names mapped to the resume collection their rows draw from.
+GROUP_SOURCES: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("experience", "employment", "work", "job", "position"), "positions"),
+    (("education", "school", "degree", "academic"), "education"),
+)
+
+
+def group_source(group_name: str) -> str:
+    """Which resume collection a repeating section should be filled from."""
+    lowered = normalize(group_name)
+    for keywords, source in GROUP_SOURCES:
+        if any(keyword in lowered for keyword in keywords):
+            return source
+    return ""
+
+
+_BY_NAME: dict[str, CanonicalField] = {f.name: f for f in (*CANONICAL_FIELDS, *ENTRY_FIELDS)}
 
 
 def normalize(text: str) -> str:
@@ -441,16 +550,44 @@ def match_form(
     fields: list[FormField],
     threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
 ) -> list[FieldMatch]:
-    """Assign canonical fields to form controls with a greedy one to one pass.
+    """Assign canonical fields to form controls.
 
-    Candidate pairings are sorted by confidence and consumed highest first, so
-    a strong "First Name" match claims that control before a weaker generic
-    "Name" match can. Fields flagged ``allow_multiple`` may be assigned to more
-    than one control because forms routinely ask several demographic questions.
+    The one to one constraint applies within a scope, not across the whole
+    document. Ungrouped controls share one scope; each row of a repeating
+    section is its own. Without that, Workday's ten work-history rows look like
+    nine duplicates of the first and only one row ever gets filled.
+
+    Within a scope, candidate pairings are sorted by confidence and consumed
+    highest first, so a strong "First Name" match claims that control before a
+    weaker generic "Name" match can. Fields flagged ``allow_multiple`` may be
+    assigned more than once, because forms routinely ask several demographic
+    questions.
     """
-    candidates: list[tuple[float, int, str]] = []
+    scopes: dict[tuple[str, int], list[int]] = {}
     for index, form_field in enumerate(fields):
-        for canonical in CANONICAL_FIELDS:
+        key = (form_field.group, form_field.group_index) if form_field.is_grouped else ("", -1)
+        scopes.setdefault(key, []).append(index)
+
+    matches_by_index: dict[int, FieldMatch] = {}
+    for (group_name, _row), member_indexes in scopes.items():
+        vocabulary = ENTRY_FIELDS if group_name else CANONICAL_FIELDS
+        for index, match in _match_scope(fields, member_indexes, vocabulary, threshold).items():
+            matches_by_index[index] = match
+
+    return [matches_by_index[index] for index in range(len(fields))]
+
+
+def _match_scope(
+    fields: list[FormField],
+    member_indexes: list[int],
+    vocabulary: tuple[CanonicalField, ...],
+    threshold: float,
+) -> dict[int, FieldMatch]:
+    """Run the greedy assignment across one independent scope."""
+    candidates: list[tuple[float, int, str]] = []
+    for index in member_indexes:
+        form_field = fields[index]
+        for canonical in vocabulary:
             if not _is_type_compatible(form_field, canonical.name):
                 continue
             confidence = score_field(form_field, canonical)
@@ -474,29 +611,26 @@ def match_form(
         claimed_fields.add(index)
         claimed_canonicals.add(canonical_name)
 
-    matches: list[FieldMatch] = []
-    for index, form_field in enumerate(fields):
+    matches: dict[int, FieldMatch] = {}
+    for index in member_indexes:
+        form_field = fields[index]
         if index not in assignment:
-            matches.append(
-                FieldMatch(
-                    form_field=form_field,
-                    status=FillStatus.SKIPPED_NO_MATCH,
-                    reason="No canonical field scored above the confidence threshold.",
-                )
+            matches[index] = FieldMatch(
+                form_field=form_field,
+                status=FillStatus.SKIPPED_NO_MATCH,
+                reason="No canonical field scored above the confidence threshold.",
             )
             continue
         canonical_name, confidence = assignment[index]
         canonical = _BY_NAME[canonical_name]
-        matches.append(
-            FieldMatch(
-                form_field=form_field,
-                canonical=canonical_name,
-                confidence=confidence,
-                status=FillStatus.SKIPPED_BY_POLICY
-                if canonical.policy is FillPolicy.REVIEW_ONLY
-                else FillStatus.SKIPPED_NO_VALUE,
-                reason=canonical.note if canonical.policy is FillPolicy.REVIEW_ONLY else "",
-            )
+        matches[index] = FieldMatch(
+            form_field=form_field,
+            canonical=canonical_name,
+            confidence=confidence,
+            status=FillStatus.SKIPPED_BY_POLICY
+            if canonical.policy is FillPolicy.REVIEW_ONLY
+            else FillStatus.SKIPPED_NO_VALUE,
+            reason=canonical.note if canonical.policy is FillPolicy.REVIEW_ONLY else "",
         )
     return matches
 
@@ -534,6 +668,82 @@ def resolve_value(canonical_name: str, resume: ResumeData, *, resume_path: str =
     return lookup.get(canonical_name, "")
 
 
+_MONTHS = {
+    "jan": "01", "feb": "02", "mar": "03", "apr": "04", "may": "05", "jun": "06",
+    "jul": "07", "aug": "08", "sep": "09", "oct": "10", "nov": "11", "dec": "12",
+}  # fmt: skip
+
+
+def _split_date(value: str) -> tuple[str, str]:
+    """Split a resume date such as "Jul 2021" into ("07", "2021").
+
+    Workday renders each date as separate month and year inputs, so a single
+    string cannot be typed into either one.
+    """
+    text = value.strip()
+    if not text or text.lower() in {"present", "current", "now"}:
+        return "", ""
+    year = ""
+    year_match = re.search(r"(19|20)\d{2}", text)
+    if year_match:
+        year = year_match.group(0)
+    month = ""
+    month_match = re.search(r"[A-Za-z]{3}", text)
+    if month_match:
+        month = _MONTHS.get(month_match.group(0).lower(), "")
+    if not month:
+        numeric = re.match(r"\s*(\d{1,2})\s*/", text)
+        if numeric:
+            month = f"{int(numeric.group(1)):02d}"
+    return month, year
+
+
+def resolve_entry_value(
+    canonical_name: str,
+    resume: ResumeData,
+    group_name: str,
+    row: int,
+) -> str:
+    """Look up a value for one row of a repeating section.
+
+    Row 0 is the most recent entry, matching how both resumes and application
+    forms order history. A row beyond what the resume supplies returns empty and
+    is reported as a gap.
+    """
+    source = group_source(group_name)
+
+    if source == "positions":
+        if row >= len(resume.positions):
+            return ""
+        position = resume.positions[row]
+        start_month, start_year = _split_date(position.start_date)
+        end_month, end_year = _split_date(position.end_date)
+        return {
+            "entry_title": position.title,
+            "entry_company": position.company,
+            "entry_description": position.description,
+            "entry_start_month": start_month,
+            "entry_start_year": start_year,
+            "entry_end_month": end_month,
+            "entry_end_year": end_year,
+            "entry_currently_here": "yes" if position.is_current else "",
+            "entry_location": position.location,
+        }.get(canonical_name, "")
+
+    if source == "education":
+        if row >= len(resume.education):
+            return ""
+        entry = resume.education[row]
+        return {
+            "entry_school": entry.school,
+            "entry_degree": entry.degree,
+            "entry_field_of_study": entry.major,
+            "entry_end_year": entry.graduation_year,
+        }.get(canonical_name, "")
+
+    return ""
+
+
 def plan_fill(
     fields: list[FormField],
     resume: ResumeData,
@@ -550,7 +760,11 @@ def plan_fill(
     for match in matches:
         if not match.canonical or match.status is FillStatus.SKIPPED_BY_POLICY:
             continue
-        value = resolve_value(match.canonical, resume, resume_path=resume_path)
+        field = match.form_field
+        if field.is_grouped:
+            value = resolve_entry_value(match.canonical, resume, field.group, field.group_index)
+        else:
+            value = resolve_value(match.canonical, resume, resume_path=resume_path)
         if value:
             match.value = value
             match.status = FillStatus.FILLED

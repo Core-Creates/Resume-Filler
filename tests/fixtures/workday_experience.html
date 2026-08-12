@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>My Experience</title></head>
+<body>
+<!--
+  Markup patterns copied from a live Workday application page
+  (myworkdayjobs.com, the "My Experience" step).
+
+  The defining feature is that work history is a REPEATING GROUP. Identifiers
+  carry the section and the row: workExperience-1--jobTitle,
+  workExperience-2--jobTitle, and so on. A matcher that assigns each canonical
+  field once per document treats row 2 as a duplicate of row 1 and fills only
+  the first job.
+
+  Dates are split into separate month and year spinbuttons whose visible label
+  is identical ("From"); only the aria-label distinguishes them.
+
+  Note the row numbers below are deliberately non-contiguous, as Workday's are:
+  the raw index is not a usable offset into a resume.
+-->
+<form id="applyFlowMyExpPage">
+  <h2>Work Experience</h2>
+
+  <div class="row">
+    <label for="workExperience-3--jobTitle">Job Title *</label>
+    <input type="text" id="workExperience-3--jobTitle" name="jobTitle" required>
+    <label for="workExperience-3--companyName">Company *</label>
+    <input type="text" id="workExperience-3--companyName" name="companyName" required>
+    <label for="workExperience-3--location">Location</label>
+    <input type="text" id="workExperience-3--location" name="location">
+    <label for="workExperience-3--currentlyWorkHere">I currently work here</label>
+    <input id="workExperience-3--currentlyWorkHere" type="checkbox">
+    <div class="dateInputWrapper">
+      <span class="application-label">From *</span>
+      <input role="spinbutton" id="workExperience-3--startDateMonth" aria-label="Month">
+      <input role="spinbutton" id="workExperience-3--startDateYear" aria-label="Year">
+    </div>
+    <div class="dateInputWrapper">
+      <span class="application-label">To *</span>
+      <input role="spinbutton" id="workExperience-3--endDateMonth" aria-label="Month">
+      <input role="spinbutton" id="workExperience-3--endDateYear" aria-label="Year">
+    </div>
+    <label for="workExperience-3--roleDescription">Role Description</label>
+    <textarea id="workExperience-3--roleDescription"></textarea>
+  </div>
+
+  <div class="row">
+    <label for="workExperience-7--jobTitle">Job Title *</label>
+    <input type="text" id="workExperience-7--jobTitle" name="jobTitle" required>
+    <label for="workExperience-7--companyName">Company *</label>
+    <input type="text" id="workExperience-7--companyName" name="companyName" required>
+    <label for="workExperience-7--location">Location</label>
+    <input type="text" id="workExperience-7--location" name="location">
+    <div class="dateInputWrapper">
+      <span class="application-label">From *</span>
+      <input role="spinbutton" id="workExperience-7--startDateMonth" aria-label="Month">
+      <input role="spinbutton" id="workExperience-7--startDateYear" aria-label="Year">
+    </div>
+    <label for="workExperience-7--roleDescription">Role Description</label>
+    <textarea id="workExperience-7--roleDescription"></textarea>
+  </div>
+
+  <!-- A third, entirely blank template row that the applicant never fills. -->
+  <div class="row">
+    <label for="workExperience-9--jobTitle">Job Title *</label>
+    <input type="text" id="workExperience-9--jobTitle" name="jobTitle" required>
+    <label for="workExperience-9--companyName">Company *</label>
+    <input type="text" id="workExperience-9--companyName" name="companyName" required>
+  </div>
+
+  <h2>Education</h2>
+  <div class="row">
+    <label for="education-1--schoolName">School or University *</label>
+    <input type="text" id="education-1--schoolName" required>
+    <label for="education-1--degree">Degree *</label>
+    <input type="text" id="education-1--degree" required>
+    <label for="education-1--fieldOfStudy">Field of Study</label>
+    <input type="text" id="education-1--fieldOfStudy">
+    <label for="education-1--gradeAverage">Overall Result (GPA)</label>
+    <input type="text" id="education-1--gradeAverage">
+  </div>
+
+  <label for="linkedinQuestion">What is your LinkedIn profile URL?</label>
+  <input type="text" id="linkedinQuestion">
+
+  <button type="button">Save and Continue</button>
+</form>
+</body>
+</html>

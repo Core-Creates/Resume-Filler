@@ -15,6 +15,7 @@ wild associate labels five different ways.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from bs4 import BeautifulSoup, Tag
@@ -53,6 +54,71 @@ def _is_decorative(aria_hidden: str, element_type: str) -> bool:
     exception: they are routinely hidden behind a styled button.
     """
     return aria_hidden.lower() == "true" and element_type != "file"
+
+
+# Repeating sections announce themselves in the identifier. Workday writes
+# "workExperience-2--jobTitle"; Rails-style forms write "education[1][school]"
+# or "education_1_school". All three carry the same information: which group,
+# and which row within it.
+_GROUP_PATTERNS = (
+    re.compile(r"^(?P<group>[A-Za-z][A-Za-z]*)-(?P<index>\d+)--(?P<field>.+)$"),
+    re.compile(r"^(?P<group>[A-Za-z_]+)\[(?P<index>\d+)\]\[?(?P<field>[A-Za-z_]+)\]?$"),
+    re.compile(r"^(?P<group>[A-Za-z]+(?:[A-Z][a-z]+)*)_(?P<index>\d+)_(?P<field>.+)$"),
+)
+
+
+def parse_group(identifier: str) -> tuple[str, int]:
+    """Extract the repeating-section name and row index from an identifier.
+
+    Returns ``("", -1)`` when the identifier does not belong to a group.
+    """
+    text = (identifier or "").strip()
+    if not text:
+        return "", -1
+    for pattern in _GROUP_PATTERNS:
+        match = pattern.match(text)
+        if match:
+            try:
+                return match.group("group"), int(match.group("index"))
+            except (ValueError, IndexError):
+                continue
+    return "", -1
+
+
+DATE_PART_LABELS = {"month", "year", "day"}
+
+
+def normalize_fields(fields: list[FormField]) -> list[FormField]:
+    """Post-process a raw scan. Shared by both adapters so they cannot diverge.
+
+    Two jobs:
+
+    * Attach repeating-group identity, renumbering row indices to a dense
+      zero-based sequence. Workday's markup starts at arbitrary numbers and
+      skips values, so the raw index is not a usable offset into a resume.
+    * Give split date inputs a distinguishing label. Workday renders "From" as
+      two spinbuttons whose only difference is an aria-label of "Month" or
+      "Year", so both otherwise arrive labelled "From" and are indistinguishable.
+    """
+    for field in fields:
+        group, index = parse_group(field.element_id)
+        if not group:
+            group, index = parse_group(field.name)
+        field.group, field.group_index = group, index
+
+        aria = field.aria_label.strip().lower()
+        if aria in DATE_PART_LABELS and field.label and aria not in field.label.lower():
+            field.label = f"{field.label} {field.aria_label.strip()}"
+
+    # Renumber each group's rows to 0, 1, 2 ... in the order they appear.
+    for group_name in {f.group for f in fields if f.group}:
+        members = [f for f in fields if f.group == group_name]
+        ordering = sorted({f.group_index for f in members})
+        remap = {original: position for position, original in enumerate(ordering)}
+        for field in members:
+            field.group_index = remap[field.group_index]
+
+    return fields
 
 
 def _clean(text: Any) -> str:
@@ -237,7 +303,7 @@ def fields_from_html(html: str) -> list[FormField]:
                 handle=element,
             )
         )
-    return fields
+    return normalize_fields(fields)
 
 
 # --------------------------------------------------------------------------
@@ -484,9 +550,12 @@ def fields_from_driver(driver: Any, max_depth: int = MAX_FRAME_DEPTH) -> list[Fo
         except WebDriverException:
             logger.debug("Could not return to the top document", exc_info=True)
 
+    normalize_fields(fields)
+    groups = {f.group for f in fields if f.group}
     logger.info(
-        "Scanned %d control(s) across %d browsing context(s)",
+        "Scanned %d control(s) across %d browsing context(s)%s",
         len(fields),
         len({field.frame_path for field in fields}) or 1,
+        f", repeating groups: {sorted(groups)}" if groups else "",
     )
     return fields
