@@ -52,6 +52,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="JSON file of answers your resume does not contain. Defaults to ./profile.json",
     )
     parser.add_argument(
+        "--attach",
+        type=int,
+        metavar="PORT",
+        help=(
+            "Drive a browser already open on this debugging port instead of "
+            "starting a new one. The port is required, because an optional value "
+            "here would swallow the subcommand after it. The 'browser' command "
+            "prints the exact line to use."
+        ),
+    )
+    parser.add_argument(
         "--session",
         help=(
             "Directory where the browser keeps cookies, so a login survives between "
@@ -128,6 +139,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--yes", action="store_true", help="Take every default without prompting."
     )
 
+    browser_cmd = subparsers.add_parser(
+        "browser",
+        help="Open a browser the tool can attach to, using your normal profile.",
+    )
+    browser_cmd.add_argument("url", nargs="?", help="Optional page to open in it.")
+    browser_cmd.add_argument("--port", type=int, help="Debugging port. Defaults to 9222.")
+    browser_cmd.add_argument(
+        "--isolated",
+        action="store_true",
+        help="Use a separate profile rather than opening the port on your main one.",
+    )
+
     login_cmd = subparsers.add_parser(
         "login", help="Open a browser so you can sign in once; the session is saved."
     )
@@ -150,8 +173,10 @@ def _resolve_settings(args: argparse.Namespace) -> Settings:
         settings.profile_path = Path(args.profile).expanduser()
     if getattr(args, "session", None):
         settings.session_dir = Path(args.session).expanduser()
-    if getattr(args, "browser", None):
+    if getattr(args, "browser", None) and args.command != "browser":
         settings.browser = args.browser
+    if getattr(args, "attach", None):
+        settings.attach_port = args.attach
     return settings
 
 
@@ -207,7 +232,9 @@ def command_inspect(args: argparse.Namespace, settings: Settings) -> int:
     from .browser import managed_driver
     from .form_filler import fill_form
 
-    with managed_driver(settings.browser, settings.headless, settings.session_dir) as driver:
+    with managed_driver(
+        settings.browser, settings.headless, settings.session_dir, settings.attach_port
+    ) as driver:
         driver.get(args.url)
         matches = fill_form(
             driver,
@@ -294,7 +321,9 @@ def command_apply(args: argparse.Namespace, settings: Settings) -> int:
     cover_letter = str(settings.cover_letter_path) if settings.cover_letter_path else ""
 
     try:
-        with managed_driver(settings.browser, settings.headless, settings.session_dir) as driver:
+        with managed_driver(
+            settings.browser, settings.headless, settings.session_dir, settings.attach_port
+        ) as driver:
             for posting in postings:
                 result = apply_to_job(
                     driver,
@@ -401,6 +430,7 @@ def _hold_for_review(posting: JobPosting, last: bool) -> None:
 
 def command_init(args: argparse.Namespace, settings: Settings) -> int:
     """Set up .env and profile.json so the first real command just works."""
+    from .paths import default_config_dir, is_frozen
     from .setup_wizard import (
         Prompter,
         find_resumes,
@@ -410,8 +440,11 @@ def command_init(args: argparse.Namespace, settings: Settings) -> int:
     )
 
     prompter = Prompter(interactive=None if not args.yes else False)
-    root = Path.cwd()
+    root = default_config_dir()
+    root.mkdir(parents=True, exist_ok=True)
     env_path, profile_path = root / ".env", root / "profile.json"
+    if is_frozen():
+        print(f"Configuration will be kept in {root}")
 
     print("Resume-Filler setup")
     print("-" * 60)
@@ -486,6 +519,79 @@ def command_init(args: argparse.Namespace, settings: Settings) -> int:
     print("Nothing types or submits anything unless you pass --submit.")
     print("Both files are gitignored. Never commit them.")
     return 0
+
+
+def command_browser(args: argparse.Namespace, settings: Settings) -> int:
+    """Open a browser the tool can later attach to, using your normal profile.
+
+    A browser started the ordinary way accepts no external control, so there is
+    no way to reach a window someone already has open. Starting it once from
+    here, with your real profile, means your logins, extensions and tabs are all
+    there and the tool can drive that same window.
+    """
+    import shutil
+    import subprocess
+
+    from .browser import DEFAULT_DEBUG_PORT
+
+    port = args.port or DEFAULT_DEBUG_PORT
+    binaries = {
+        "chrome": [
+            "chrome",
+            "google-chrome",
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        ],
+        "edge": ["msedge", r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"],
+    }
+    if settings.browser not in binaries:
+        print(
+            f"Cannot attach to {settings.browser}. Only chrome and edge support it.\n"
+            "Use --browser chrome.",
+            file=sys.stderr,
+        )
+        return 2
+
+    executable = next(
+        (candidate for candidate in binaries[settings.browser] if shutil.which(candidate)),
+        None,
+    ) or next((c for c in binaries[settings.browser] if Path(c).is_file()), None)
+    if not executable:
+        print(f"Could not find {settings.browser} on this machine.", file=sys.stderr)
+        return 2
+
+    command = [executable, f"--remote-debugging-port={port}"]
+    if args.isolated:
+        # A separate profile, so the debugging port is not opened on the browser
+        # holding the rest of someone's logged-in life.
+        profile = settings.session_dir or (default_session_dir() / "attach-profile")
+        Path(profile).mkdir(parents=True, exist_ok=True)
+        command.append(f"--user-data-dir={Path(profile).resolve()}")
+    if args.url:
+        command.append(args.url)
+
+    print(f"Starting {settings.browser} with the debugging port open on {port}.")
+    if not args.isolated:
+        print("Using your normal profile, so your logins and tabs are all here.")
+        print(
+            "\nNote: any program on this machine can drive a browser with an open\n"
+            "debugging port, including reading its cookies. Close this window when\n"
+            "you are finished, or use --isolated to keep it off your main profile."
+        )
+    try:
+        subprocess.Popen(command)
+    except OSError as exc:
+        print(f"Could not start it: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"\nNow run commands with --attach {port}, for example:")
+    print(f"  resume-filler --attach {port} apply --url <application url> --fill")
+    return 0
+
+
+def default_session_dir() -> Path:
+    from .paths import user_config_dir
+
+    return user_config_dir()
 
 
 def command_login(args: argparse.Namespace, settings: Settings) -> int:
@@ -564,6 +670,7 @@ def main(argv: list[str] | None = None) -> int:
         "apply": command_apply,
         "tailor": command_tailor,
         "init": command_init,
+        "browser": command_browser,
         "login": command_login,
         "export": command_export,
     }
