@@ -157,7 +157,7 @@ def _strip_contact_details(line: str) -> str:
     """Remove email, phone, URLs and separators, leaving any prose behind.
 
     Real resumes routinely put everything on one line:
-    "Corrina Ray Alcoser  corrinaalcoser@example.com | (210) 555-0100".
+    "Alex Morgan Reyes  alex.reyes@example.com | (210) 555-0100".
     Rejecting any line containing an "@" or a digit misses the name entirely.
     """
     cleaned = EMAIL_RE.sub(" ", line)

@@ -186,8 +186,8 @@ class TestLinkedInStyleLayout:
     "San Antonio" working at "Texas".
     """
 
-    RESUME = """Corrina Example
-corrina@example.com | (210) 555-0100
+    RESUME = """Alex Morgan Reyes
+alex.reyes@example.com | (210) 555-0100
 San Antonio, TX
 
 Experience
