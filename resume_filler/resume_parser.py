@@ -369,6 +369,36 @@ def _could_be_title(line: str) -> bool:
     return capitalised >= len(words) * 0.6
 
 
+# Employment type words, which sit on the date line beside the location and
+# are never a place.
+_EMPLOYMENT_TYPES = re.compile(
+    r"^(full|part)[\s-]?time$|^(contract|internship|temporary|permanent|freelance"
+    r"|seasonal|apprenticeship|self[\s-]?employed|hybrid|remote|on[\s-]?site)$",
+    re.I,
+)
+
+
+def _split_role_and_employer(line: str) -> tuple[str, str]:
+    """Split "Title—Company" into its two halves.
+
+    Em dash, en dash, pipe, " at " and a comma all appear as the separator.
+    """
+    pieces = [p.strip() for p in re.split(r"\s*[—–|]\s*|\s+at\s+|\s*,\s*", line, maxsplit=1)]
+    title = pieces[0].strip(" -–—|")
+    company = pieces[1].strip(" -–—|") if len(pieces) > 1 else ""
+    return title, company
+
+
+def _first_place_like(parts: list[str]) -> str:
+    """Pick the location out of "San Antonio, Texas | Full-time | ...".
+
+    Splitting has already separated the pieces, so this only has to skip the
+    employment type and keep the rest.
+    """
+    places = [p for p in parts if p and not _EMPLOYMENT_TYPES.match(p)]
+    return ", ".join(places[:2])
+
+
 def extract_positions(lines: list[str]) -> list[Position]:
     """Parse the experience section into individual roles.
 
@@ -389,7 +419,17 @@ def extract_positions(lines: list[str]) -> list[Position]:
 
         parts = [p.strip() for p in re.split(r"\s*[,|]\s*|\s{2,}|\s+at\s+", remainder) if p.strip()]
         title, company, location = "", "", ""
-        if len(parts) >= 2:
+
+        # A third layout, and the one LinkedIn exports:
+        #   Chief Information Security Officer—The AI Cowboys
+        #   San Antonio, Texas | Full-time | Nov 2025 - Present
+        # The role sits entirely on the line above and the date line carries
+        # only location and employment type, so reading title and company off
+        # the date line yields "San Antonio" working at "Texas".
+        if _is_role_title(previous) and not (parts and _is_role_title(parts[0])):
+            title, company = _split_role_and_employer(previous)
+            location = _first_place_like(parts)
+        elif len(parts) >= 2:
             # One resume can mix both layouts:
             #   "Employer, City, State      Dates"  with the title on the next line
             #   "Title, Employer            Dates"  with everything on one line
