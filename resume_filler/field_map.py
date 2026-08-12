@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from .models import FieldMatch, FillStatus, FormField, ResumeData
+from .profile import Profile
 
 # How much to trust each descriptive attribute. A visible <label> is what the
 # human applicant reads, so it outranks internal identifiers.
@@ -741,6 +742,56 @@ def match_form(
     return [matches_by_index[index] for index in range(len(fields))]
 
 
+DUPLICATE_MIN_CONFIDENCE = 0.80
+
+
+def _descriptor_signature(form_field: FormField) -> str:
+    """What a human would read as this control's identity.
+
+    Two controls sharing a signature are the same question asked twice, not two
+    different questions that happen to look alike.
+    """
+    for attribute in ("label", "aria_label", "name", "element_id"):
+        text = normalize(getattr(form_field, attribute, ""))
+        if text:
+            return text
+    return ""
+
+
+def _assign_duplicate_controls(
+    fields: list[FormField],
+    member_indexes: list[int],
+    assignment: dict[int, tuple[str, float]],
+) -> None:
+    """Let an identical control take the same value as the one that claimed it.
+
+    One to one assignment exists so two different controls cannot claim the same
+    data. It is wrong in exactly one case: a form that asks the same question
+    twice. iCIMS renders First Name, Last Name and Email once to register an
+    account and again for the profile, both marked required, so the second set
+    was left blank and blocked submission.
+
+    Restricted to confident matches on non-file controls. Uploading the same
+    document to two file inputs is a different decision, since the second is
+    usually a cover letter rather than a duplicate.
+    """
+    claimed_by_signature: dict[str, tuple[str, float]] = {}
+    for index, (canonical_name, confidence) in assignment.items():
+        if confidence < DUPLICATE_MIN_CONFIDENCE or fields[index].is_file_input:
+            continue
+        signature = _descriptor_signature(fields[index])
+        if signature:
+            claimed_by_signature.setdefault(signature, (canonical_name, confidence))
+
+    for index in member_indexes:
+        if index in assignment or fields[index].is_file_input:
+            continue
+        signature = _descriptor_signature(fields[index])
+        duplicate = claimed_by_signature.get(signature) if signature else None
+        if duplicate:
+            assignment[index] = duplicate
+
+
 def _match_scope(
     fields: list[FormField],
     member_indexes: list[int],
@@ -774,6 +825,8 @@ def _match_scope(
         assignment[index] = (canonical_name, confidence)
         claimed_fields.add(index)
         claimed_canonicals.add(canonical_name)
+
+    _assign_duplicate_controls(fields, member_indexes, assignment)
 
     matches: dict[int, FieldMatch] = {}
     for index in member_indexes:
@@ -914,6 +967,7 @@ def plan_fill(
     *,
     resume_path: str = "",
     threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
+    profile: Profile | None = None,
 ) -> list[FieldMatch]:
     """Full planning pass: match every control, then attach the value to use.
 
@@ -922,9 +976,23 @@ def plan_fill(
     """
     matches = match_form(fields, threshold=threshold)
     for match in matches:
-        if not match.canonical or match.status is FillStatus.SKIPPED_BY_POLICY:
+        if not match.canonical:
             continue
         field = match.form_field
+
+        # A value the applicant wrote into their own profile is their answer,
+        # already considered, so it may settle a question the engine would
+        # otherwise refuse to touch. The plan says where it came from.
+        supplied = profile.get(match.canonical) if profile else ""
+        if supplied:
+            match.value = supplied
+            match.status = FillStatus.FILLED
+            match.reason = "From your profile."
+            continue
+
+        if match.status is FillStatus.SKIPPED_BY_POLICY:
+            continue
+
         if field.is_grouped:
             value = resolve_entry_value(match.canonical, resume, field.group, field.group_index)
         else:
@@ -934,5 +1002,8 @@ def plan_fill(
             match.status = FillStatus.FILLED
         else:
             match.status = FillStatus.SKIPPED_NO_VALUE
-            match.reason = f"Resume did not supply a value for '{match.canonical}'."
+            match.reason = (
+                f'Not in your resume. Add "{match.canonical}" to your profile '
+                "file to fill this automatically."
+            )
     return matches

@@ -44,6 +44,7 @@ class Settings:
     headless: bool = False
     page_timeout: float = 15.0
     confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD
+    profile_path: Path = field(default_factory=lambda: Path("profile.json"))
     database_path: Path = field(default_factory=lambda: Path("applications.db"))
     output_dir: Path = field(default_factory=lambda: Path("runs"))
 
@@ -65,6 +66,7 @@ class Settings:
             headless=_env_bool("HEADLESS", False),
             page_timeout=_env_float("PAGE_TIMEOUT", 15.0),
             confidence_threshold=_env_float("CONFIDENCE_THRESHOLD", DEFAULT_CONFIDENCE_THRESHOLD),
+            profile_path=Path(os.getenv("PROFILE_PATH", "profile.json")).expanduser(),
             database_path=Path(os.getenv("DATABASE_PATH", "applications.db")).expanduser(),
             output_dir=Path(os.getenv("OUTPUT_DIR", "runs")).expanduser(),
         )

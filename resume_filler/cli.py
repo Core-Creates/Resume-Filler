@@ -22,6 +22,7 @@ from .extractors import fields_from_html
 from .field_map import plan_fill
 from .logging_setup import configure_logging
 from .models import ApplicationResult, ApplicationStatus, JobPosting
+from .profile import load_profile
 from .reporting import (
     diagnose_sparse_scan,
     render_plan,
@@ -42,6 +43,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable debug logging.")
     parser.add_argument("--env-file", help="Path to a .env file. Defaults to ./.env")
+    parser.add_argument(
+        "--profile",
+        help="JSON file of answers your resume does not contain. Defaults to ./profile.json",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     parse_cmd = subparsers.add_parser("parse", help="Parse a resume and print the result.")
@@ -110,6 +115,8 @@ def _resolve_settings(args: argparse.Namespace) -> Settings:
         resume_override = args.resume
     if resume_override:
         settings.resume_path = Path(resume_override).expanduser()
+    if getattr(args, "profile", None):
+        settings.profile_path = Path(args.profile).expanduser()
     return settings
 
 
@@ -150,6 +157,7 @@ def command_inspect(args: argparse.Namespace, settings: Settings) -> int:
             resume,
             resume_path=str(resume_path.resolve()),
             threshold=settings.confidence_threshold,
+            profile=load_profile(settings.profile_path),
         )
         print(f"\nFill plan for {args.html}")
         print(render_plan(matches))

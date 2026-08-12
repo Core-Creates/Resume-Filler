@@ -184,3 +184,6 @@ applications.csv
 runs/
 *.pdf
 !tests/fixtures/*.pdf
+
+# Personal answers supplementing the resume. Never commit this.
+profile.json
