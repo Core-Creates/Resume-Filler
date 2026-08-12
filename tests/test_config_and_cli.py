@@ -12,23 +12,25 @@ from resume_filler.models import JobPosting
 
 class TestSettings:
     def test_reads_from_environment(self, monkeypatch, tmp_path) -> None:
-        monkeypatch.setenv("JOB_SITE_USERNAME", "someone@example.com")
-        monkeypatch.setenv("JOB_SITE_PASSWORD", "s3cret")
         monkeypatch.setenv("BROWSER", "firefox")
         monkeypatch.setenv("HEADLESS", "true")
         monkeypatch.setenv("CONFIDENCE_THRESHOLD", "0.8")
         settings = Settings.from_env(tmp_path / "missing.env")
-        assert settings.username == "someone@example.com"
-        assert settings.password == "s3cret"
         assert settings.browser == "firefox"
         assert settings.headless is True
         assert settings.confidence_threshold == 0.8
 
-    def test_no_credentials_are_hardcoded(self) -> None:
-        """The previous version shipped a username and password in source."""
+    def test_no_credential_settings_exist_at_all(self) -> None:
+        """The tool must never hold a password.
+
+        The original shipped one in source. The replacement read one from the
+        environment and then never used it, which is worse than useless: it
+        invited the user to store a plaintext password for no purpose. Sign in
+        is handled by a real browser session instead.
+        """
         settings = Settings()
-        assert settings.username == ""
-        assert settings.password == ""
+        assert not hasattr(settings, "username")
+        assert not hasattr(settings, "password")
 
     def test_invalid_threshold_is_reported(self, tmp_path) -> None:
         resume = tmp_path / "cv.pdf"

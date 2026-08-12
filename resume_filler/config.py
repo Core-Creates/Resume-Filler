@@ -36,8 +36,6 @@ def _env_float(key: str, default: float) -> float:
 class Settings:
     """Runtime settings for a single run."""
 
-    username: str = ""
-    password: str = ""
     resume_path: Path = field(default_factory=lambda: Path("resume.pdf"))
     cover_letter_path: Path | None = None
     browser: str = "chrome"
@@ -60,8 +58,6 @@ class Settings:
 
         cover_letter = os.getenv("COVER_LETTER_PATH", "").strip()
         return cls(
-            username=os.getenv("JOB_SITE_USERNAME", ""),
-            password=os.getenv("JOB_SITE_PASSWORD", ""),
             resume_path=Path(os.getenv("RESUME_PATH", "resume.pdf")).expanduser(),
             cover_letter_path=Path(cover_letter).expanduser() if cover_letter else None,
             browser=os.getenv("BROWSER", "chrome").strip().lower(),
