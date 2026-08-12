@@ -140,6 +140,14 @@ class FormField:
     aria_label: str = ""
     placeholder: str = ""
     autocomplete: str = ""
+    accept: str = ""
+    """The file types a file input will take.
+
+    Decisive in both directions. An input accepting only images cannot be a
+    resume upload however its label reads, and an unlabelled input accepting
+    ".pdf,.doc,.docx" almost certainly is one.
+    """
+
     required: bool = False
     options: list[str] = field(default_factory=list)
     group: str = ""

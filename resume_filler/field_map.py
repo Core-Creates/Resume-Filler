@@ -201,7 +201,16 @@ CANONICAL_FIELDS: tuple[CanonicalField, ...] = (
             (r"\bprovince\b", 1.0),
             (r"\bregion\b", 0.85),
         ),
-        negatives=(r"\bunited\s*states\b", r"\bstatement\b"),
+        # "Search by country/region or code" is a phone dialling-code picker.
+        # Matching it on "region" typed the applicant's state into it.
+        negatives=(
+            r"\bunited\s*states\b",
+            r"\bstatement\b",
+            r"\bcountry\b",
+            r"\bcode\b",
+            r"\bphone\b",
+            r"\bdial\b",
+        ),
     ),
     CanonicalField(
         name="postal_code",
@@ -249,7 +258,19 @@ CANONICAL_FIELDS: tuple[CanonicalField, ...] = (
             (r"\bupload\b", 0.70),
             (r"\battach\b", 0.70),
         ),
-        negatives=(r"\bcover\s*letter\b", r"\btranscript\b", r"\bportfolio\b"),
+        # Never the avatar control. SmartRecruiters labels it "Upload profile
+        # image", which the generic "upload" pattern otherwise matches.
+        negatives=(
+            r"\bcover\s*letter\b",
+            r"\btranscript\b",
+            r"\bportfolio\b",
+            r"\bphoto\b",
+            r"\bimage\b",
+            r"\bpicture\b",
+            r"\bavatar\b",
+            r"\bheadshot\b",
+            r"\blogo\b",
+        ),
     ),
     CanonicalField(
         name="cover_letter",
@@ -526,6 +547,20 @@ def score_field(form_field: FormField, canonical: CanonicalField) -> float:
     if autocomplete and AUTOCOMPLETE_TOKENS.get(autocomplete) == canonical.name:
         return 1.0
 
+    # A file input that takes documents is a resume upload even with no label
+    # at all, which is exactly how SmartRecruiters ships it.
+    if (
+        canonical.name == "resume_file"
+        and form_field.is_file_input
+        and accept_kind(form_field.accept) == "document"
+    ):
+        return max(DOCUMENT_UPLOAD_CONFIDENCE, _best_attribute_score(form_field, canonical))
+
+    return _best_attribute_score(form_field, canonical)
+
+
+def _best_attribute_score(form_field: FormField, canonical: CanonicalField) -> float:
+    """Highest weighted pattern match across the control's descriptive attributes."""
     best = 0.0
     for attribute, weight in ATTRIBUTE_WEIGHTS.items():
         text = normalize(getattr(form_field, attribute, ""))
@@ -535,12 +570,79 @@ def score_field(form_field: FormField, canonical: CanonicalField) -> float:
     return round(best, 4)
 
 
+IMAGE_EXTENSIONS = frozenset(
+    [
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".bmp",
+        ".webp",
+        ".tif",
+        ".tiff",
+        ".jfif",
+        ".svg",
+        ".heic",
+        ".heif",
+        ".avif",
+    ]
+)
+DOCUMENT_EXTENSIONS = frozenset(
+    [
+        ".pdf",
+        ".doc",
+        ".docx",
+        ".dot",
+        ".dotx",
+        ".rtf",
+        ".txt",
+        ".odt",
+        ".pages",
+        ".resume",
+        ".rsm",
+        ".rmr",
+        ".wpd",
+        ".abw",
+    ]
+)
+DOCUMENT_UPLOAD_CONFIDENCE = 0.75
+
+
+def accept_kind(accept: str) -> str:
+    """Classify a file input's accept list as "image", "document" or unknown.
+
+    SmartRecruiters labels its avatar control "Upload profile image" and its
+    resume control not at all, so the label is the weaker signal here and the
+    accept list is the strong one.
+    """
+    text = accept.lower()
+    if not text.strip():
+        return ""
+    if "image/" in text:
+        return "image"
+    if "application/pdf" in text or "application/msword" in text:
+        return "document"
+
+    tokens = {token.strip() for token in text.split(",") if token.strip()}
+    extensions = {token if token.startswith(".") else f".{token}" for token in tokens}
+    if extensions & DOCUMENT_EXTENSIONS:
+        return "document"
+    if extensions and extensions <= IMAGE_EXTENSIONS:
+        return "image"
+    return ""
+
+
 def _is_type_compatible(form_field: FormField, canonical_name: str) -> bool:
     """Reject pairings that cannot possibly work, such as text into a file input."""
+    if form_field.is_file_input:
+        # An input that only takes images is never the resume upload, whatever
+        # its label says. Without this the engine uploads the resume PDF into
+        # the profile photo field.
+        if accept_kind(form_field.accept) == "image":
+            return False
+        return canonical_name in {"resume_file", "cover_letter"}
     if canonical_name in {"resume_file", "cover_letter"}:
         return True
-    if form_field.is_file_input:
-        return canonical_name in {"resume_file", "cover_letter"}
     if form_field.field_type == "email":
         return canonical_name in {"email", "confirm_email"}
     return True

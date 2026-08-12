@@ -367,6 +367,7 @@ def _fields_from_soup(soup: BeautifulSoup, path: tuple[int, ...] = ()) -> list[F
                 aria_label=_clean(element.get("aria-label")),
                 placeholder=_clean(element.get("placeholder")),
                 autocomplete=_clean(element.get("autocomplete")),
+                accept=_clean(element.get("accept")),
                 required=element.has_attr("required")
                 or str(element.get("aria-required", "")).lower() == "true",
                 options=options,
@@ -566,6 +567,7 @@ def _scan_context(driver: Any, path: tuple[int, ...]) -> list[FormField]:
                     aria_label=_clean(element.get_attribute("aria-label")),
                     placeholder=_clean(element.get_attribute("placeholder")),
                     autocomplete=_clean(element.get_attribute("autocomplete")),
+                    accept=_clean(element.get_attribute("accept")),
                     required=bool(element.get_attribute("required"))
                     or (element.get_attribute("aria-required") or "").lower() == "true",
                     options=options,
