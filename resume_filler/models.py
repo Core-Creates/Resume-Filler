@@ -127,6 +127,17 @@ class FormField:
     autocomplete: str = ""
     required: bool = False
     options: list[str] = field(default_factory=list)
+    frame_path: tuple[int, ...] = ()
+    """Indices of the nested iframes this control lives in, from the top document.
+
+    Empty means the top document. Greenhouse and Lever boards embedded on a
+    company careers site sit inside an iframe, so without this the engine finds
+    no fields at all on those pages.
+    """
+    widget: str = "native"
+    """How the control must be driven: ``native`` for real HTML inputs, or
+    ``combobox`` for a scripted dropdown built out of divs, which has to be
+    opened and clicked rather than typed into."""
     handle: Any = None
     """Opaque back-reference to the live element, unused during matching.
 
@@ -142,6 +153,11 @@ class FormField:
     @property
     def is_choice_input(self) -> bool:
         return self.tag == "select" or self.field_type in {"radio", "checkbox"}
+
+    @property
+    def is_combobox(self) -> bool:
+        """A scripted dropdown. Typing into one leaves the value uncommitted."""
+        return self.widget == "combobox"
 
     def describe(self) -> str:
         """Human readable identifier used in logs and review output."""

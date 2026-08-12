@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Apply</title></head>
+<body>
+<!--
+  Markup patterns copied from a live Greenhouse application page. Two details
+  here are what real pages do and hand-written fixtures do not:
+
+  1. Fields are labelled with aria-label, not <label for>.
+  2. Each react-select dropdown ships with a hidden `required` proxy input whose
+     only job is to make native form validation fire. A real page carries nine
+     of them. Collecting those yields nine unmappable required fields, which
+     blocks every submission.
+  3. The react-select text input advertises itself with aria-autocomplete="list"
+     rather than role="combobox". Treating it as a plain text field means typing
+     into it, which never commits the selection and submits as empty.
+-->
+<form>
+  <input id="first_name" class="input" aria-label="First Name" type="text" required>
+  <input id="last_name" class="input" aria-label="Last Name" type="text" required>
+  <input id="email" class="input" aria-label="Email" type="text" required>
+
+  <div class="select__container">
+    <span id="lbl-country">Country</span>
+    <input class="select__input" id="country" type="text" tabindex="0"
+           autocomplete="off" aria-autocomplete="list" aria-expanded="false"
+           aria-labelledby="lbl-country">
+    <input required tabindex="-1" aria-hidden="true" class="requiredInput" value="">
+  </div>
+
+  <div class="select__container">
+    <span id="lbl-loc">Location (City)</span>
+    <input class="select__input" id="candidate-location" type="text" tabindex="0"
+           autocomplete="off" aria-autocomplete="list" aria-expanded="false"
+           aria-labelledby="lbl-loc">
+    <input required tabindex="-1" aria-hidden="true" class="requiredInput" value="">
+  </div>
+
+  <input id="resume" class="visually-hidden" type="file" aria-label="Resume">
+  <input id="cover_letter" class="visually-hidden" type="file" aria-label="Cover Letter">
+
+  <input id="question_37020453002" class="input" aria-label="LinkedIn Profile" type="text">
+  <input id="question_37020454002" class="input" aria-label="Website" type="text">
+
+  <button type="submit">Submit application</button>
+</form>
+</body>
+</html>

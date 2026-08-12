@@ -3,8 +3,10 @@ name: CI
 on:
   push:
     branches: [main]
+  # No base branch filter. Restricting this to main means a stacked pull request
+  # targeting another feature branch gets no checks at all, which is exactly when
+  # you most want them.
   pull_request:
-    branches: [main]
 
 permissions:
   contents: read

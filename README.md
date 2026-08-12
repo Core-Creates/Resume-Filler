@@ -98,11 +98,62 @@ python -m resume_filler apply --greenhouse stripe --keywords python security --l
 python -m resume_filler apply --lever netflix --location remote
 ```
 
+**See how well you match before applying:**
+
+```bash
+python -m resume_filler tailor --greenhouse stripe --keywords python --cover-letters
+```
+
+Postings come back ranked by keyword coverage, best fit first:
+
+```
+  Coverage: 53% (9 of 17 emphasised terms)
+
+  Present in your resume:
+    kubernetes, aws, backend, engineer, kafka, python, terraform
+
+  Emphasised by the posting, absent from your resume:
+    elixir, graphql, snowflake
+
+  Add the ones you genuinely have. Do not add the ones you do not.
+```
+
 **Export your application history:**
 
 ```bash
 python -m resume_filler export applications.csv
 ```
+
+## Handling real ATS pages
+
+Three things that break naive form automation are handled explicitly:
+
+- **iframes.** Greenhouse and Lever boards embedded on a company careers site
+  live inside an iframe. The scanner descends up to three levels of nesting and
+  records which frame each control lives in, then re-enters that frame before
+  writing to it. Scanning only the top document finds zero fields on these pages.
+- **Multi-step wizards.** Workday and similar split an application across
+  several pages. The filler works through each step, stopping when there is no
+  Continue button, when a step repeats itself, or at a step cap. Advancing can
+  never submit: the Continue selectors deliberately exclude Submit.
+- **Scripted dropdowns.** React, Ant Design and Select2 render a combobox as a
+  div, not a `<select>`. Typing into one leaves the widget's internal state
+  unset, so the value looks right on screen and submits as empty. These are
+  detected, opened, and selected by clicking the matching option, and a
+  selection that does not commit raises rather than passing silently.
+
+Dry run stops at step one of a wizard, because advancing means clicking a real
+button on the employer's form. Use `--submit` to walk the whole thing.
+
+## Cover letters
+
+`--cover-letters` (or `--tailor` during an apply run) writes a draft per posting
+into the output directory. The generator only recombines facts already in your
+resume. It will not claim a skill you do not have, and when it finds no real
+overlap with the posting it says so instead of inventing enthusiasm.
+
+Drafts carry `[DRAFT NOTE: ...]` markers that you are expected to delete. That is
+deliberate: a letter that reads as finished is one people send without reading.
 
 ## How the field mapping works
 

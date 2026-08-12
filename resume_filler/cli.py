@@ -72,6 +72,26 @@ def build_parser() -> argparse.ArgumentParser:
     apply_cmd.add_argument(
         "--skip-seen", action="store_true", help="Skip postings already in the tracker."
     )
+    apply_cmd.add_argument(
+        "--tailor",
+        action="store_true",
+        help="Write a keyword gap report and a cover letter draft per posting.",
+    )
+
+    tailor_cmd = subparsers.add_parser(
+        "tailor", help="Analyse postings against your resume without applying."
+    )
+    tailor_origin = tailor_cmd.add_mutually_exclusive_group(required=True)
+    tailor_origin.add_argument("--greenhouse", help="Greenhouse board token.")
+    tailor_origin.add_argument("--lever", help="Lever company slug.")
+    tailor_origin.add_argument("--csv", help="CSV with url and description columns.")
+    tailor_cmd.add_argument("--resume", help="Path to the resume PDF.")
+    tailor_cmd.add_argument("--keywords", nargs="*", help="Only keep postings matching these.")
+    tailor_cmd.add_argument("--location", default="", help="Only keep postings in this location.")
+    tailor_cmd.add_argument("--limit", type=int, default=10, help="Maximum postings to analyse.")
+    tailor_cmd.add_argument(
+        "--cover-letters", action="store_true", help="Also write a cover letter draft for each."
+    )
 
     export_cmd = subparsers.add_parser("export", help="Export the application tracker to CSV.")
     export_cmd.add_argument("destination", nargs="?", default="applications.csv")
@@ -212,6 +232,15 @@ def command_apply(args: argparse.Namespace, settings: Settings) -> int:
                 )
                 results.append(result)
                 print(render_result(result))
+                if args.tailor:
+                    from .tailoring import keyword_gap, render_keyword_gap, write_cover_letter
+
+                    gap = keyword_gap(posting, resume)
+                    if gap.top_terms:
+                        print("\n  Keyword gap")
+                        print(render_keyword_gap(gap))
+                        letter = write_cover_letter(posting, resume, settings.output_dir, gap)
+                        print(f"  Cover letter draft: {letter}")
                 tracker.record(result)
     except KeyboardInterrupt:
         print("\nInterrupted. Recording what completed so far.", file=sys.stderr)
@@ -226,6 +255,44 @@ def command_apply(args: argparse.Namespace, settings: Settings) -> int:
 
     failed = sum(1 for r in results if r.status is ApplicationStatus.FAILED)
     return 1 if failed else 0
+
+
+def command_tailor(args: argparse.Namespace, settings: Settings) -> int:
+    """Analyse postings against the resume. Opens no browser and applies to nothing."""
+    from .tailoring import keyword_gap, render_keyword_gap, write_cover_letter
+
+    resume_path = Path(args.resume).expanduser() if args.resume else settings.resume_path
+    resume = parse_resume(resume_path)
+    print(render_resume_summary(resume))
+
+    args.urls = None  # tailor has no --urls source
+    postings = _load_postings(args)[: args.limit]
+    if not postings:
+        print("\nNo postings matched.")
+        return 0
+
+    ranked = []
+    for posting in postings:
+        gap = keyword_gap(posting, resume)
+        ranked.append((gap, posting))
+
+    ranked.sort(key=lambda pair: pair[0].coverage, reverse=True)
+
+    for gap, posting in ranked:
+        heading = posting.title or posting.url
+        if posting.company:
+            heading += f" at {posting.company}"
+        print("\n" + "=" * 96)
+        print(heading)
+        print(posting.url)
+        print("=" * 96)
+        print(render_keyword_gap(gap))
+        if args.cover_letters:
+            path = write_cover_letter(posting, resume, settings.output_dir, gap)
+            print(f"  Cover letter draft: {path}")
+
+    print("\nRanked best fit first by keyword coverage.")
+    return 0
 
 
 def command_export(args: argparse.Namespace, settings: Settings) -> int:
@@ -245,6 +312,7 @@ def main(argv: list[str] | None = None) -> int:
         "parse": command_parse,
         "inspect": command_inspect,
         "apply": command_apply,
+        "tailor": command_tailor,
         "export": command_export,
     }
 

@@ -74,6 +74,27 @@ class TestContactExtraction:
         assert data.phone == ""
 
 
+class TestCountryInference:
+    def test_us_state_implies_the_country(self, sample_resume_text: str) -> None:
+        """Country is required on real Greenhouse pages but resumes never state
+        it, so a blank country blocked every submission."""
+        assert parse_resume_text(sample_resume_text).country == "United States"
+
+    def test_unknown_state_leaves_country_blank(self) -> None:
+        """Reported as a gap rather than guessed."""
+        from resume_filler.models import ResumeData
+        from resume_filler.resume_parser import infer_country
+
+        assert infer_country(ResumeData(state="ZZ")) == ""
+        assert infer_country(ResumeData()) == ""
+
+    def test_an_explicit_country_is_never_overwritten(self) -> None:
+        from resume_filler.models import ResumeData
+        from resume_filler.resume_parser import infer_country
+
+        assert infer_country(ResumeData(state="TX", country="Canada")) == "Canada"
+
+
 class TestSections:
     def test_splits_known_headings(self, sample_resume_text: str) -> None:
         sections = split_sections(sample_resume_text)

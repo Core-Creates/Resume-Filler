@@ -198,6 +198,83 @@ def _with_scheme(url: str) -> str:
     return url if url.lower().startswith("http") else f"https://{url}"
 
 
+US_STATES = frozenset(
+    [
+        "AL",
+        "AK",
+        "AZ",
+        "AR",
+        "CA",
+        "CO",
+        "CT",
+        "DE",
+        "FL",
+        "GA",
+        "HI",
+        "ID",
+        "IL",
+        "IN",
+        "IA",
+        "KS",
+        "KY",
+        "LA",
+        "ME",
+        "MD",
+        "MA",
+        "MI",
+        "MN",
+        "MS",
+        "MO",
+        "MT",
+        "NE",
+        "NV",
+        "NH",
+        "NJ",
+        "NM",
+        "NY",
+        "NC",
+        "ND",
+        "OH",
+        "OK",
+        "OR",
+        "PA",
+        "RI",
+        "SC",
+        "SD",
+        "TN",
+        "TX",
+        "UT",
+        "VT",
+        "VA",
+        "WA",
+        "WV",
+        "WI",
+        "WY",
+        "DC",
+        "PR",
+        "VI",
+        "GU",
+        "AS",
+        "MP",
+    ]
+)
+
+
+def infer_country(data: ResumeData) -> str:
+    """Derive the country when the resume states a location but not a country.
+
+    Resumes almost never write the country out, yet Country is a required field
+    on real Greenhouse pages, so leaving it blank blocks every submission. A
+    two-letter US state code is unambiguous enough to act on. Anything else is
+    left empty and reported as a gap rather than guessed.
+    """
+    if data.country:
+        return data.country
+    if data.state.upper() in US_STATES:
+        return "United States"
+    return ""
+
+
 def extract_positions(lines: list[str]) -> list[Position]:
     """Parse the experience section into individual roles.
 
@@ -311,6 +388,8 @@ def parse_resume_text(text: str) -> ResumeData:
     _extract_contact(header_text, data)
     if not data.email or not data.phone:
         _extract_contact(text, data)
+
+    data.country = infer_country(data)
 
     if sections.get("summary"):
         data.summary = " ".join(sections["summary"]).strip()

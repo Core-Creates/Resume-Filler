@@ -28,11 +28,26 @@ class StubElement:
         self.sent.append(value)
 
 
+class StubSwitchTo:
+    """Models driver.switch_to, which the frame-aware filler always uses."""
+
+    def __init__(self, driver: StubDriver) -> None:
+        self._driver = driver
+
+    def default_content(self) -> None:
+        self._driver.context = ()
+
+    def frame(self, index: int) -> None:
+        self._driver.context = (*self._driver.context, index)
+
+
 class StubDriver:
     def __init__(self, url: str = "https://example.com/apply") -> None:
         self.current_url = url
         self.visited: list[str] = []
         self.scripts: list[str] = []
+        self.context: tuple[int, ...] = ()
+        self.switch_to = StubSwitchTo(self)
 
     def get(self, url: str) -> None:
         self.visited.append(url)
@@ -41,6 +56,10 @@ class StubDriver:
     def execute_script(self, script: str, *args: object) -> str:
         self.scripts.append(script)
         return ""
+
+    def find_elements(self, by: object, selector: str) -> list[object]:
+        # A single page form: no Continue button anywhere.
+        return []
 
 
 @pytest.fixture
