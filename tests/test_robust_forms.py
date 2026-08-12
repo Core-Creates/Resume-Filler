@@ -144,7 +144,7 @@ class TestAdapterParity:
 
         from resume_filler import extractors
 
-        static_src = inspect.getsource(extractors.fields_from_html)
+        static_src = inspect.getsource(extractors._fields_from_soup)
         live_src = inspect.getsource(extractors._scan_context)
         assert "CONTROL_SELECTOR" in static_src
         assert "CONTROL_SELECTOR" in live_src
@@ -154,7 +154,7 @@ class TestAdapterParity:
 
         from resume_filler import extractors
 
-        for func in (extractors.fields_from_html, extractors._scan_context):
+        for func in (extractors._fields_from_soup, extractors._scan_context):
             assert "_is_decorative" in inspect.getsource(func)
 
 

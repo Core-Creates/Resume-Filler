@@ -139,8 +139,11 @@ def command_inspect(args: argparse.Namespace, settings: Settings) -> int:
     print(render_resume_summary(resume))
 
     if args.html:
-        html = Path(args.html).expanduser().read_text(encoding="utf-8", errors="replace")
-        fields = fields_from_html(html)
+        saved_page = Path(args.html).expanduser()
+        html = saved_page.read_text(encoding="utf-8", errors="replace")
+        # base_path lets the scan follow iframes into their saved companion
+        # files, which is the whole form on an iCIMS page.
+        fields = fields_from_html(html, base_path=saved_page)
         matches = plan_fill(
             fields,
             resume,

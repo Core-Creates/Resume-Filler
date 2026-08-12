@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import logging
 import re
+from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
 from bs4 import BeautifulSoup, Tag
 
@@ -248,14 +250,83 @@ def _combobox_options(element: Tag) -> list[str]:
     return [_clean(option.get_text(" ")) for option in listbox.select("[role='option']")]
 
 
-def fields_from_html(html: str) -> list[FormField]:
+def _resolve_local_frame(base_dir: Path, src: str) -> Path | None:
+    """Map an iframe src to a file on disk, or None if it is not local.
+
+    When a browser saves a page it writes each iframe's document into the
+    companion "_files" folder and rewrites the src to point at it, so a saved
+    page really does carry its frames with it.
+    """
+    text = src.strip()
+    if not text or text.lower().startswith(("http://", "https://", "//", "data:", "about:")):
+        return None
+    candidate = base_dir / unquote(text.split("?", 1)[0].split("#", 1)[0])
+    try:
+        return candidate if candidate.is_file() else None
+    except OSError:
+        return None
+
+
+def _collect_from_document(
+    html: str,
+    base_dir: Path | None,
+    path: tuple[int, ...],
+    max_depth: int,
+    out: list[FormField],
+) -> None:
+    """Scan one document, then descend into any locally saved iframes."""
+    soup = BeautifulSoup(html, "html.parser")
+    out.extend(_fields_from_soup(soup, path))
+
+    if base_dir is None or len(path) >= max_depth:
+        return
+
+    # Enumerate every frame, including ones that cannot be resolved, so the
+    # indices stay aligned with the positions Selenium would switch to.
+    for index, frame in enumerate(soup.find_all(["iframe", "frame"])):
+        src = frame.get("src")
+        if not src:
+            continue
+        child = _resolve_local_frame(base_dir, str(src))
+        if child is None:
+            continue
+        try:
+            child_html = child.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            logger.debug("Could not read saved frame %s", child)
+            continue
+        _collect_from_document(child_html, child.parent, (*path, index), max_depth, out)
+
+
+def fields_from_html(
+    html: str,
+    *,
+    base_path: str | Path | None = None,
+    max_depth: int = MAX_FRAME_DEPTH,
+) -> list[FormField]:
     """Extract every fillable control from an HTML document.
 
     Scripted dropdowns are included alongside native controls, because an ATS
     that renders its selects as divs would otherwise look like a form with
     missing fields.
+
+    Pass ``base_path`` (the saved .html file, or its directory) to follow
+    iframes into their saved companion documents. iCIMS puts the entire
+    application inside an iframe, so without this a saved iCIMS page yields
+    only the site search box while the real 61-control form sits one file away.
     """
-    soup = BeautifulSoup(html, "html.parser")
+    fields: list[FormField] = []
+    base_dir: Path | None = None
+    if base_path is not None:
+        given = Path(base_path).expanduser()
+        base_dir = given.parent if given.is_file() else given
+
+    _collect_from_document(html, base_dir, (), max_depth, fields)
+    return normalize_fields(fields)
+
+
+def _fields_from_soup(soup: BeautifulSoup, path: tuple[int, ...] = ()) -> list[FormField]:
+    """Collect the controls in a single parsed document."""
     fields: list[FormField] = []
 
     # The same selector the Selenium adapter uses, so the two adapters cannot
@@ -300,10 +371,11 @@ def fields_from_html(html: str) -> list[FormField]:
                 or str(element.get("aria-required", "")).lower() == "true",
                 options=options,
                 widget="combobox" if combobox else "native",
+                frame_path=path,
                 handle=element,
             )
         )
-    return normalize_fields(fields)
+    return fields
 
 
 # --------------------------------------------------------------------------

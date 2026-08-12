@@ -31,8 +31,12 @@ GITHUB_RE = re.compile(r"(?:https?://)?(?:www\.)?github\.com/[A-Za-z0-9\-_.]+/?"
 URL_RE = re.compile(r"(?<![@\w])(?:https?://)?(?:www\.)?[A-Za-z0-9\-]+\.[A-Za-z]{2,}(?:/[^\s,;]*)?")
 # Horizontal whitespace only. Allowing \s here let a city match run backwards
 # across newlines and swallow the name and job title above it.
+# The separator before the postal code may be a comma as well as whitespace.
+# "San Antonio, TX, 78240" is as common as "Austin, TX 78701", and requiring
+# whitespace dropped the zip on the comma form, leaving a required field empty.
 LOCATION_RE = re.compile(
-    r"([A-Z][A-Za-z.\-]+(?:[ \t][A-Z][A-Za-z.\-]+)*),[ \t]*([A-Z]{2})\b(?:[ \t]+(\d{5}(?:-\d{4})?))?"
+    r"([A-Z][A-Za-z.\-]+(?:[ \t][A-Z][A-Za-z.\-]+)*),[ \t]*([A-Z]{2})\b"
+    r"(?:[ \t,]+(\d{5}(?:-\d{4})?))?"
 )
 
 _MONTH = r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?"
