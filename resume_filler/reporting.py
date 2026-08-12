@@ -41,7 +41,8 @@ def render_resume_summary(resume: ResumeData) -> str:
         f"  GitHub    : {resume.github_url or '(not found)'}",
         f"  Current   : {resume.current_title or '(not found)'}"
         f"{' at ' + resume.current_company if resume.current_company else ''}",
-        f"  Education : {education.degree + ' ' + education.school if education else '(not found)'}",
+        f"  Education : "
+        f"{education.degree_display + ' ' + education.school if education else '(not found)'}",
         f"  Positions : {len(resume.positions)}",
         f"  Skills    : {len(resume.skills)}",
     ]

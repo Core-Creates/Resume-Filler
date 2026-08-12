@@ -661,7 +661,7 @@ def resolve_value(canonical_name: str, resume: ResumeData, *, resume_path: str =
         "current_title": resume.current_title,
         "resume_file": resume_path,
         "school": education.school if education else "",
-        "degree": education.degree if education else "",
+        "degree": education.degree_display if education else "",
         "major": education.major if education else "",
         "graduation_year": education.graduation_year if education else "",
     }
@@ -736,7 +736,7 @@ def resolve_entry_value(
         entry = resume.education[row]
         return {
             "entry_school": entry.school,
-            "entry_degree": entry.degree,
+            "entry_degree": entry.degree_display,
             "entry_field_of_study": entry.major,
             "entry_end_year": entry.graduation_year,
         }.get(canonical_name, "")

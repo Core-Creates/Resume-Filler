@@ -60,6 +60,12 @@ DEGREE_RE = re.compile(
     re.I,
 )
 SCHOOL_RE = re.compile(r"\b(University|College|Institute|Academy|School)\b", re.I)
+# An unfinished degree must never be reported as complete.
+IN_PROGRESS_RE = re.compile(
+    r"\((?:in\s*progress|ongoing|current)\)|\b(?:in\s*progress|expected|anticipated"
+    r"|pursuing|candidate\s+for)\b",
+    re.I,
+)
 # Only "in", never "of". Matching "of" turned "Master of Science in Computer
 # Science" into a major of "Science in Computer Science".
 MAJOR_RE = re.compile(r"\bin\s+([A-Z][A-Za-z&]+(?:\s+(?:and\s+)?[A-Z][A-Za-z&]+)*)")
@@ -474,6 +480,8 @@ def extract_education(lines: list[str]) -> list[Education]:
             current = Education()
             entries.append(current)
 
+        if IN_PROGRESS_RE.search(line):
+            current.in_progress = True
         if degree_match and not current.degree:
             current.degree = degree_match.group(0).strip(". ")
         if school and not current.school:

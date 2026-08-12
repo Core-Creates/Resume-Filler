@@ -56,6 +56,20 @@ class Education:
     degree: str = ""
     major: str = ""
     graduation_year: str = ""
+    in_progress: bool = False
+    """True when the resume marks the degree unfinished.
+
+    Dropping this turns "Bachelor of Business Administration (In Progress)" into
+    a completed degree, which would overstate the applicant's credentials on
+    every form the tool fills. Never discard it.
+    """
+
+    @property
+    def degree_display(self) -> str:
+        """The degree as it may safely be written onto an application."""
+        if self.degree and self.in_progress:
+            return f"{self.degree} (In Progress)"
+        return self.degree
 
 
 @dataclass
