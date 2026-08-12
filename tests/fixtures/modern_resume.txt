@@ -1,0 +1,32 @@
+Alex Morgan Reyes alex.reyes@example.com • (210) 555-0142
+https://www.linkedin.com/in/alex-reyes
+https://github.com/example
+San Antonio, TX, 78240
+Software Engineer
+Accomplished professional with extensive experience in virtualization, cloud
+computing, and standardization of complex technical operations. Repeated success
+in managing servers and server-client infrastructures.
+Technical Proficiencies
+Platforms: Windows, Linux, and Unix servers
+Frameworks: Angular, React, Rails, Agile
+Infrastructure: Kubernetes and Docker Containers, Apache server clusters, MongoDB
+Tools: Git, GitLab, Postman, Nessus, Burp Suite, JIRA, ServiceNow
+Others: C#, C++, Java, PHP, Python, Ruby, JavaScript, TypeScript, PowerShell
+Career Experience
+Northwind Systems , San Antonio, Texas Jul 2021 to May 2022
+Senior Software Developer
+Delivered proactive support as a contractor. Used Angular and Rails to build a
+web portal. Leveraged JIRA for release coordination.
+Key Achievements:
+● Coordinated with team on creation of new portal
+● Created custom scripts for microservice integration
+Contoso Cloud Group , San Antonio, Texas Jan 2021 to May 2021
+Tier 3 IT Support (Fabrikam Contractor)
+Supported cloud migration efforts and resolved escalated incidents.
+Security Analyst/Consultant, Digital Defense Inc. Dec 2018 to Jun 2019
+Performed vulnerability assessments and client reporting.
+Education
+Bachelor of Business Administration in Information Systems
+The University of Texas at San Antonio, 2025
+Certifications
+CompTIA Security+

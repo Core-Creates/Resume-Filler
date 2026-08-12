@@ -74,6 +74,92 @@ class TestContactExtraction:
         assert data.phone == ""
 
 
+class TestRealWorldResumeLayout:
+    """Regressions found by running the parser against two real resumes.
+
+    The synthetic fixture used conventional headings and a single consistent
+    layout. A real resume used "Career Experience" and "Technical
+    Proficiencies", put the name on the same line as the contact details, and
+    mixed two different company/title arrangements in one document. The parser
+    returned zero positions and zero skills.
+    """
+
+    @pytest.fixture
+    def modern(self):
+        from pathlib import Path
+
+        path = Path(__file__).parent / "fixtures" / "modern_resume.txt"
+        return parse_resume_text(path.read_text(encoding="utf-8"))
+
+    def test_name_shares_a_line_with_contact_details(self, modern) -> None:
+        """Rejecting any line containing '@' or a digit missed the name entirely."""
+        assert modern.first_name == "Alex"
+        assert modern.last_name == "Reyes"
+
+    def test_unconventional_section_headings_are_found(self, modern) -> None:
+        """'Career Experience' and 'Technical Proficiencies' are in no alias list."""
+        assert len(modern.positions) == 3
+        assert modern.skills
+
+    def test_company_first_layout_with_title_below(self, modern) -> None:
+        """ "Employer, City, State  Dates" with the role on the following line."""
+        first = modern.positions[0]
+        assert first.title == "Senior Software Developer"
+        assert first.company == "Northwind Systems"
+
+    def test_title_first_layout_on_the_same_line(self, modern) -> None:
+        """The same resume also uses "Title, Employer  Dates"."""
+        third = modern.positions[2]
+        assert third.title == "Security Analyst/Consultant"
+        assert third.company == "Digital Defense Inc."
+
+    def test_title_without_an_obvious_role_noun(self, modern) -> None:
+        """'Tier 3 IT Support (Fabrikam Contractor)' matched no keyword list."""
+        second = modern.positions[1]
+        assert second.title.startswith("Tier 3 IT Support")
+        assert second.company == "Contoso Cloud Group"
+
+    def test_employer_names_are_never_read_as_titles(self, modern) -> None:
+        """A loose title test called 'Contoso Cloud Group' a role and swapped
+        the two fields."""
+        for position in modern.positions:
+            assert "Group" not in position.title
+            assert "Systems" not in position.title or "Engineer" in position.title
+
+    def test_labelled_skill_lines_are_flattened(self, modern) -> None:
+        """Skills arrive as 'Platforms: Windows, Linux, and Unix servers'."""
+        lowered = {s.lower() for s in modern.skills}
+        assert "python" in lowered
+        assert "react" in lowered
+        assert not any(s.lower().startswith("platforms:") for s in modern.skills)
+
+    def test_multi_word_degree_survives(self, modern) -> None:
+        assert modern.education[0].degree == "Bachelor of Business Administration"
+
+    def test_degree_does_not_swallow_the_major(self, modern) -> None:
+        """re.I makes [A-Z] match 'in', so the degree ate the 'in ...' clause."""
+        assert "in Information" not in modern.education[0].degree
+        assert modern.education[0].major == "Information Systems"
+
+    def test_bullets_are_not_mistaken_for_headings(self, modern) -> None:
+        assert all(not p.title.startswith("●") for p in modern.positions)
+
+
+class TestPdfTextExtraction:
+    def test_collapsed_word_spacing_is_detected(self) -> None:
+        """One real PDF extracted as 'SanAntonio,TX' and 'Jul2021', which
+        defeats every downstream regex."""
+        from resume_filler.resume_parser import MIN_SPACE_RATIO, _space_ratio
+
+        assert _space_ratio("SanAntonio,TX,78240Jul2021toMay2022") < MIN_SPACE_RATIO
+        assert _space_ratio("San Antonio, TX 78240 Jul 2021 to May 2022") >= MIN_SPACE_RATIO
+
+    def test_empty_text_does_not_divide_by_zero(self) -> None:
+        from resume_filler.resume_parser import _space_ratio
+
+        assert _space_ratio("") == 0.0
+
+
 class TestCountryInference:
     def test_us_state_implies_the_country(self, sample_resume_text: str) -> None:
         """Country is required on real Greenhouse pages but resumes never state
