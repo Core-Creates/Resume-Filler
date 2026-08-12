@@ -44,6 +44,8 @@ class Settings:
     page_timeout: float = 15.0
     confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD
     profile_path: Path = field(default_factory=lambda: Path("profile.json"))
+    attach_port: int | None = None
+    """Debugging port of a browser already open, when driving that instead."""
     session_dir: Path | None = None
     """Where the browser keeps cookies, so a login survives between runs."""
     database_path: Path = field(default_factory=lambda: Path("applications.db"))
@@ -77,6 +79,9 @@ class Settings:
             profile_path=Path(profile_raw).expanduser()
             if (profile_raw := os.getenv("PROFILE_PATH", "").strip())
             else profile_default,
+            attach_port=int(attach_raw)
+            if (attach_raw := os.getenv("ATTACH_PORT", "").strip()).isdigit()
+            else None,
             session_dir=Path(session_raw).expanduser()
             if (session_raw := os.getenv("SESSION_DIR", "").strip())
             else None,

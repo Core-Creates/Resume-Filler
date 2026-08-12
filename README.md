@@ -202,6 +202,42 @@ Two things worth knowing:
 The tool never automates the sign in itself, and there is no reason it should:
 you do it once by hand, and it does not have to hold your password.
 
+## Using the browser you already have open
+
+A browser started the ordinary way accepts no external control, by design. There
+is no way to reach a window you already have in front of you unless it was
+started ready for it. So start it from here once:
+
+```bash
+resume-filler browser
+```
+
+That opens Chrome with **your normal profile**, so every login, extension and tab
+is exactly where you left it, plus a debugging port the tool can talk to. Then:
+
+```bash
+resume-filler --attach 9222 apply --url "<application url>" --fill
+```
+
+It fills the form in that window. It never closes it: a browser you opened is
+yours, not the tool's.
+
+This is the easiest route for iCIMS, Workday and the other portals behind a sign
+in, because you are already signed into them in your own browser. No separate
+session directory, nothing to log into twice.
+
+**The tradeoff is real and worth understanding.** A debugging port lets any
+program on your machine drive that browser and read its cookies. It listens on
+localhost only, so nothing off your machine can reach it, but anything running
+on it can. Two ways to limit that:
+
+- Close the window when you have finished applying. The port goes with it.
+- Use `resume-filler browser --isolated`, which opens a separate profile with
+  none of your everyday logins in it. Safer, at the cost of signing in there.
+
+Chrome and Edge only. Firefox's automation protocol has no way to attach to a
+running instance, and the tool says so rather than failing obscurely.
+
 ## Your profile: the answers a resume cannot give
 
 Every form asks for things no resume contains. A street address is required

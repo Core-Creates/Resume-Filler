@@ -20,10 +20,48 @@ logger = logging.getLogger(__name__)
 DEFAULT_WINDOW = (1440, 1000)
 
 
+DEFAULT_DEBUG_PORT = 9222
+
+
+def attach_to_browser(browser: str, port: int) -> Any:
+    """Drive a browser that is already open, rather than starting a new one.
+
+    This only works if that browser was started with a remote debugging port.
+    A normally launched Chrome accepts no external control at all, by design,
+    so there is no way to reach the window someone already has in front of them
+    unless it was opened for it. ``resume-filler browser`` starts one correctly.
+
+    Firefox is not supported here. Its automation protocol has no equivalent of
+    attaching to a running instance.
+    """
+    from selenium import webdriver
+
+    normalized = browser.strip().lower()
+    if normalized == "chrome":
+        options: Any = webdriver.ChromeOptions()
+    elif normalized == "edge":
+        options = webdriver.EdgeOptions()
+    else:
+        raise ValueError(
+            f"Cannot attach to a running {browser}. Only chrome and edge support it; "
+            "use --browser chrome, or drop --attach to start a fresh browser."
+        )
+
+    options.add_experimental_option("debuggerAddress", f"127.0.0.1:{port}")
+    driver = (
+        webdriver.Chrome(options=options)
+        if normalized == "chrome"
+        else webdriver.Edge(options=options)
+    )
+    logger.info("Attached to the %s already running on port %d", normalized, port)
+    return driver
+
+
 def build_driver(
     browser: str = "chrome",
     headless: bool = False,
     profile_dir: str | Path | None = None,
+    attach_port: int | None = None,
 ) -> Any:
     """Create a WebDriver for the named browser.
 
@@ -34,6 +72,9 @@ def build_driver(
 
     Raises ``ValueError`` for an unsupported browser name.
     """
+    if attach_port:
+        return attach_to_browser(browser, attach_port)
+
     from selenium import webdriver
 
     normalized = browser.strip().lower()
@@ -121,13 +162,26 @@ def managed_driver(
     browser: str = "chrome",
     headless: bool = False,
     profile_dir: str | Path | None = None,
+    attach_port: int | None = None,
 ) -> Iterator[Any]:
-    """Yield a driver and guarantee it is closed, including on Ctrl-C."""
-    driver = build_driver(browser, headless, profile_dir)
+    """Yield a driver and clean up, including on Ctrl-C.
+
+    A browser we started is ours to close. One we merely attached to is not:
+    quitting it would shut every tab the person had open, which is a rude way to
+    end a run that was supposed to help.
+    """
+    driver = build_driver(browser, headless, profile_dir, attach_port)
+    attached = bool(attach_port)
     try:
         yield driver
     finally:
-        try:
-            driver.quit()
-        except Exception:  # noqa: BLE001 - shutdown must never mask the real error
-            logger.debug("Driver did not shut down cleanly", exc_info=True)
+        # Never "return" from this block. A return inside finally discards any
+        # exception still propagating, so a run that failed would look like it
+        # succeeded.
+        if attached:
+            logger.debug("Leaving the attached browser open, it was not ours to close")
+        else:
+            try:
+                driver.quit()
+            except Exception:  # noqa: BLE001 - shutdown must never mask the real error
+                logger.debug("Driver did not shut down cleanly", exc_info=True)
