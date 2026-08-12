@@ -1,0 +1,60 @@
+name: Release
+
+# Tagging is the trigger, so a release is never produced by accident from a
+# routine push. Build on Windows because that is the executable people want.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build and attach to"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  windows-executable:
+    name: Build the Windows executable
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          pip install -e .
+
+      # A broken build is worse than no release, so the same gates that guard
+      # main guard anything handed to someone else.
+      - name: Verify before shipping
+        run: |
+          ruff check .
+          ruff format --check .
+          mypy resume_filler
+          pytest
+
+      - name: Build the executable
+        run: pyinstaller resume-filler.spec --noconfirm
+
+      - name: Check it actually runs
+        run: |
+          dist\resume-filler.exe --help
+          if ($LASTEXITCODE -ne 0) { throw "the executable does not start" }
+        shell: pwsh
+
+      - name: Attach it to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: dist/resume-filler.exe
+          fail_on_unmatched_files: true

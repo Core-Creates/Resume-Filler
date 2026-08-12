@@ -4,11 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "resume-filler"
-version = "2.0.0"
+version = "2.1.0"
 description = "Parse a resume and pre-fill online job applications for human review."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "GPL-3.0-or-later" }
+keywords = ["resume", "job-application", "ats", "automation", "selenium"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
@@ -24,6 +25,13 @@ dependencies = [
     "python-dotenv>=1.0.0,<2.0.0",
     "requests>=2.32.0,<3.0.0",
 ]
+
+# Deliberately no author email. Package metadata is published permanently and
+# indexed widely, so the repository is the right place to be contacted through.
+[project.urls]
+Homepage = "https://github.com/Core-Creates/Resume-Filler"
+Repository = "https://github.com/Core-Creates/Resume-Filler"
+Issues = "https://github.com/Core-Creates/Resume-Filler/issues"
 
 [project.optional-dependencies]
 dev = [
