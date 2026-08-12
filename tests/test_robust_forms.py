@@ -27,6 +27,121 @@ def workday_html() -> str:
     return (FIXTURES / "workday_step1.html").read_text(encoding="utf-8")
 
 
+@pytest.fixture
+def react_select_html() -> str:
+    return (FIXTURES / "react_select_form.html").read_text(encoding="utf-8")
+
+
+@pytest.fixture
+def lever_html() -> str:
+    return (FIXTURES / "lever_form.html").read_text(encoding="utf-8")
+
+
+class TestRealLeverMarkup:
+    """Regressions found by running the engine against a live Lever page."""
+
+    def test_div_labels_are_read(self, lever_html: str) -> None:
+        """Lever labels custom questions with <div class='application-label'>,
+        not <label>. Only looking for <label> misses every one."""
+        labels = {f.label for f in fields_from_html(lever_html)}
+        assert "Current Street Address" in labels
+        assert "Current Address (Postal Code)" in labels
+
+    def test_a_label_never_leaks_across_sections(self, lever_html: str) -> None:
+        """The live page assigned 'Portfolio URL' to ten unrelated custom
+        questions, because the fallback searched the whole document backwards.
+        A wrong label is worse than none: it can route a value into the wrong
+        field."""
+        labels = [f.label for f in fields_from_html(lever_html)]
+        assert labels.count("Portfolio URL") == 1
+
+    def test_each_address_part_maps_to_its_own_field(self, lever_html: str) -> None:
+        result = {m.form_field.label: m.canonical for m in match_form(fields_from_html(lever_html))}
+        assert result["Current Street Address"] == "address_line1"
+        assert result["Current Address (City)"] == "city"
+        assert result["Current Address (State)"] == "state"
+        assert result["Current Address (Postal Code)"] == "postal_code"
+        assert result["Current Address (Country)"] == "country"
+
+    def test_standard_wrapping_labels_still_work(self, lever_html: str) -> None:
+        """Both label styles appear on one page; neither fix may break the other."""
+        result = {m.form_field.label: m.canonical for m in match_form(fields_from_html(lever_html))}
+        assert result["Full name"] == "full_name"
+        assert result["Email"] == "email"
+        assert result["LinkedIn URL"] == "linkedin_url"
+        assert result["Portfolio URL"] == "portfolio_url"
+
+    def test_opaque_uuid_field_names_are_no_obstacle(self, lever_html: str) -> None:
+        """cards[uuid][field2] carries no signal; the label is everything."""
+        fields = fields_from_html(lever_html)
+        card_fields = [f for f in fields if f.name.startswith("cards[")]
+        assert len(card_fields) == 5
+        assert all(f.label for f in card_fields)
+
+
+class TestRealGreenhouseMarkup:
+    """Regressions found by running the engine against a live Greenhouse page.
+
+    Both bugs here passed every hand-written fixture and would have broken every
+    real application.
+    """
+
+    def test_hidden_required_proxies_are_ignored(self, react_select_html: str) -> None:
+        """react-select ships a hidden required input per dropdown purely to
+        trigger native validation. Collecting them produces unmappable required
+        fields that block submission on every Greenhouse page."""
+        fields = fields_from_html(react_select_html)
+        phantoms = [f for f in fields if f.required and not f.label and not f.element_id]
+        assert phantoms == []
+
+    def test_control_count_matches_what_a_human_sees(self, react_select_html: str) -> None:
+        fields = fields_from_html(react_select_html)
+        # 3 text, 2 dropdowns, 2 file, 2 custom questions. The 2 proxies are not
+        # controls a person could fill.
+        assert len(fields) == 9
+
+    def test_react_select_is_recognised_as_a_dropdown(self, react_select_html: str) -> None:
+        """It advertises aria-autocomplete='list', not role='combobox'. Missing
+        that means typing into it, which never commits and submits empty."""
+        fields = {f.element_id: f for f in fields_from_html(react_select_html)}
+        assert fields["country"].is_combobox
+        assert fields["candidate-location"].is_combobox
+
+    def test_plain_text_inputs_are_not_mistaken_for_dropdowns(self, react_select_html: str) -> None:
+        fields = {f.element_id: f for f in fields_from_html(react_select_html)}
+        assert not fields["first_name"].is_combobox
+        assert not fields["email"].is_combobox
+
+    def test_aria_label_only_fields_still_map(self, react_select_html: str) -> None:
+        """Real Greenhouse pages carry no <label for>; aria-label is all there is."""
+        result = {
+            m.form_field.element_id: m.canonical
+            for m in match_form(fields_from_html(react_select_html))
+        }
+        assert result["first_name"] == "first_name"
+        assert result["last_name"] == "last_name"
+        assert result["email"] == "email"
+        assert result["question_37020453002"] == "linkedin_url"
+        assert result["question_37020454002"] == "portfolio_url"
+
+    def test_hidden_file_inputs_are_still_collected(self, react_select_html: str) -> None:
+        """A file input hidden behind a styled button is the one hidden control
+        that must survive, because that is how uploads are always built."""
+        result = {
+            m.form_field.element_id: m.canonical
+            for m in match_form(fields_from_html(react_select_html))
+        }
+        assert result["resume"] == "resume_file"
+        assert result["cover_letter"] == "cover_letter"
+
+    def test_no_required_field_is_left_unmappable(self, react_select_html: str) -> None:
+        """Every required control on this page must be something the engine can
+        either fill or hand to the human by name."""
+        for match in match_form(fields_from_html(react_select_html)):
+            if match.form_field.required:
+                assert match.canonical, f"unmapped required field: {match.form_field.describe()}"
+
+
 # --------------------------------------------------------------------------
 # Scripted dropdowns
 # --------------------------------------------------------------------------

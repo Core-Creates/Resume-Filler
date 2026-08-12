@@ -33,10 +33,26 @@ IGNORED_INPUT_TYPES = {"hidden", "submit", "button", "reset", "image"}
 # Shared by both adapters so the static and live scans cannot disagree about
 # what counts as a control.
 CONTROL_SELECTOR = (
-    "input, select, textarea, [role='combobox'], [role='listbox'], [aria-haspopup='listbox']"
+    "input, select, textarea, [role='combobox'], [role='listbox'], "
+    "[aria-haspopup='listbox'], [aria-autocomplete='list']"
 )
 
 MAX_FRAME_DEPTH = 3
+
+
+def _is_decorative(aria_hidden: str, element_type: str) -> bool:
+    """Whether a control exists for the widget's plumbing, not for the applicant.
+
+    react-select, which Greenhouse and many other ATS use, renders a hidden
+    ``required`` input next to each dropdown purely so native form validation
+    fires. A real Greenhouse page carries nine of them. Collecting those means
+    nine unmappable required fields, which would block every submission.
+
+    Anything marked aria-hidden is by definition not presented to the user, so
+    it is not something a human applicant could fill either. File inputs are the
+    exception: they are routinely hidden behind a styled button.
+    """
+    return aria_hidden.lower() == "true" and element_type != "file"
 
 
 def _clean(text: Any) -> str:
@@ -99,21 +115,58 @@ def _label_for_html(element: Tag, soup: BeautifulSoup, field_type: str = "") -> 
     if legend:
         return legend
 
-    # Fall back to the nearest preceding label-like sibling.
-    previous = element.find_previous(["label", "legend"])
-    if previous:
-        return _clean(previous.get_text(" "))
+    return _container_label(element)
 
+
+# Many ATS render a label as a styled div rather than a <label>. Lever writes
+# <div class="application-label"> for every custom question.
+_LABEL_LIKE_SELECTOR = "label, legend, [class*='label']"
+
+
+def _container_label(element: Tag, max_levels: int = 4) -> str:
+    """Find the label text inside the control's own container.
+
+    Searching the whole document backwards for the nearest <label> is what a
+    naive fallback does, and on a real Lever page it assigns the same
+    "Portfolio URL" label to ten unrelated custom questions, because their real
+    labels are divs it skips straight past. Wrong labels are worse than missing
+    ones: they can route a value into the wrong field.
+
+    Bounding the search to a few ancestors keeps a label from leaking across
+    sections of the form.
+    """
+    node: Tag | None = element
+    for _ in range(max_levels):
+        parent = node.parent if node is not None else None
+        if parent is None or not isinstance(parent, Tag):
+            return ""
+        for candidate in parent.select(_LABEL_LIKE_SELECTOR):
+            # A label bound to a different control is that control's, not ours.
+            bound_to = candidate.get("for")
+            if bound_to and bound_to != element.get("id"):
+                continue
+            text = _clean(candidate.get_text(" "))
+            if text:
+                return text
+        node = parent
     return ""
 
 
 def _is_combobox_tag(element: Tag) -> bool:
-    """Whether a non-native element is a scripted dropdown."""
-    if element.name in {"input", "select", "textarea"}:
-        return str(element.get("role", "")).lower() == "combobox"
+    """Whether an element is a scripted dropdown rather than a plain field.
+
+    react-select, the widget behind Greenhouse's dropdowns, renders a real
+    ``<input>`` and advertises itself with ``aria-autocomplete="list"`` rather
+    than ``role="combobox"``. Missing that variant means the field is driven by
+    typing, which leaves the selection uncommitted and submits as empty.
+    """
     role = str(element.get("role", "")).lower()
     if role in {"combobox", "listbox"}:
         return True
+    if str(element.get("aria-autocomplete", "")).lower() == "list":
+        return True
+    if element.name in {"input", "select", "textarea"}:
+        return False
     return str(element.get("aria-haspopup", "")).lower() == "listbox"
 
 
@@ -152,6 +205,8 @@ def fields_from_html(html: str) -> list[FormField]:
 
         field_type = str(element.get("type", "text")).lower() if tag == "input" else tag
         if tag == "input" and field_type in IGNORED_INPUT_TYPES:
+            continue
+        if _is_decorative(_clean(element.get("aria-hidden")), field_type):
             continue
 
         options: list[str] = []
@@ -235,11 +290,14 @@ def switch_to_frame_path(driver: Any, path: tuple[int, ...]) -> None:
 
 
 def _is_combobox(element: Any, tag: str) -> bool:
+    """Live-page counterpart of ``_is_combobox_tag``. Keep the two in step."""
     role = (element.get_attribute("role") or "").lower()
-    if tag in {"select", "textarea"}:
-        return False
     if role in {"combobox", "listbox"}:
         return True
+    if (element.get_attribute("aria-autocomplete") or "").lower() == "list":
+        return True
+    if tag in {"input", "select", "textarea"}:
+        return False
     return (element.get_attribute("aria-haspopup") or "").lower() == "listbox"
 
 
@@ -254,6 +312,8 @@ def _scan_context(driver: Any, path: tuple[int, ...]) -> list[FormField]:
             tag = element.tag_name.lower()
             field_type = (element.get_attribute("type") or "text").lower()
             if tag == "input" and field_type in IGNORED_INPUT_TYPES:
+                continue
+            if _is_decorative(element.get_attribute("aria-hidden") or "", field_type):
                 continue
             # File inputs are routinely hidden behind a styled button, so they
             # are the one control we accept while not displayed.

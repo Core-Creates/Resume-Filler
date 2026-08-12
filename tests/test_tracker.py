@@ -119,6 +119,43 @@ class TestReporting:
         assert "SENSITIVE FULL RESUME BODY" not in path.read_text(encoding="utf-8")
 
 
+class TestConsoleEncoding:
+    def test_plan_with_non_ascii_labels_encodes_on_a_cp1252_console(self) -> None:
+        """Lever marks required fields with a heavy asterisk. Rendering a plan
+        containing one crashed the whole run on a default Windows console."""
+        import io
+
+        from resume_filler.logging_setup import configure_console_encoding
+
+        matches = [
+            FieldMatch(
+                form_field=FormField(tag="input", label="Full name ✱", required=True),
+                canonical="full_name",
+                confidence=1.0,
+                value="Jane",
+                status=FillStatus.FILLED,
+            )
+        ]
+        rendered = render_plan(matches)
+        stream = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+        configure_console_encoding()
+        # Writing must not raise UnicodeEncodeError after reconfiguration.
+        stream.reconfigure(encoding="utf-8", errors="replace")
+        stream.write(rendered)
+
+    def test_reconfigure_survives_a_stream_without_the_method(self) -> None:
+        import sys
+
+        from resume_filler.logging_setup import configure_console_encoding
+
+        original = sys.stdout
+        try:
+            sys.stdout = object()  # type: ignore[assignment]
+            configure_console_encoding()
+        finally:
+            sys.stdout = original
+
+
 class TestApplicationResult:
     def test_required_gaps_lists_unfilled_required_fields(self) -> None:
         result = ApplicationResult(
