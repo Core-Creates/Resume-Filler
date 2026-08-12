@@ -177,3 +177,10 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# Resume-Filler runtime artifacts
+applications.db
+applications.csv
+runs/
+*.pdf
+!tests/fixtures/*.pdf

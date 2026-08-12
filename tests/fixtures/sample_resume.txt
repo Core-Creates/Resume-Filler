@@ -1,0 +1,32 @@
+JANE Q. RIVERA
+Senior Software Engineer
+Austin, TX 78701
+jane.rivera@example.com | (512) 555-0184
+linkedin.com/in/janeqrivera | github.com/janeqrivera | janerivera.dev
+
+SUMMARY
+Backend engineer with nine years building distributed data platforms and
+security tooling for regulated environments.
+
+WORK EXPERIENCE
+
+Staff Software Engineer, Northwind Systems      Mar 2021 - Present
+Led the migration of the ingest pipeline to a streaming architecture.
+Cut median event latency from 900ms to 70ms.
+
+Senior Software Engineer, Contoso Data          Jun 2018 - Feb 2021
+Owned the multi-tenant query planner and its authorization layer.
+
+Software Engineer, Fabrikam Labs               Aug 2015 - May 2018
+Built internal tooling for dataset lineage and reproducibility.
+
+EDUCATION
+
+Master of Science in Computer Science
+The University of Texas at Austin, 2015
+
+B.S. in Computer Engineering
+Texas A&M University, 2013
+
+TECHNICAL SKILLS
+Python, Go, Rust, PostgreSQL, Kafka, Kubernetes, Terraform, AWS

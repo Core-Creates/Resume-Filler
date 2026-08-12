@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Apply</title></head>
+<body>
+<!--
+  Markup patterns copied from a live Lever application page.
+
+  The important detail: custom questions are NOT labelled with <label>. Lever
+  writes <div class="application-label"><div class="text">...</div></div>.
+  A fallback that searches backwards for the nearest <label> element skips past
+  every one of these and lands on the last real <label> in the document, which
+  on the live page assigned "Portfolio URL" to ten unrelated questions.
+
+  Standard fields do use a wrapping <label>, so both styles appear on one page.
+-->
+<form>
+  <ul class="application-fields">
+    <li class="application-question">
+      <label><div class="application-label">Full name</div>
+        <div class="application-field"><input type="text" name="name" required></div>
+      </label>
+    </li>
+    <li class="application-question">
+      <label><div class="application-label">Email</div>
+        <div class="application-field"><input type="email" name="email" required></div>
+      </label>
+    </li>
+    <li class="application-question">
+      <label><div class="application-label">LinkedIn URL</div>
+        <div class="application-field"><input type="text" name="urls[LinkedIn]"></div>
+      </label>
+    </li>
+    <li class="application-question">
+      <label><div class="application-label">Portfolio URL</div>
+        <div class="application-field"><input type="text" name="urls[Portfolio]"></div>
+      </label>
+    </li>
+  </ul>
+
+  <!-- Custom "cards" questions: div labels, opaque uuid field names. -->
+  <div class="section application-form">
+    <ul class="application-fields">
+      <li class="custom-question">
+        <div class="application-label full-width"><div class="text">Current Street Address</div></div>
+        <div class="application-field full-width required-field">
+          <input required class="card-field-input" type="text"
+                 name="cards[d8c298f6-1020-4054-8908-928a966309f0][field0]">
+        </div>
+      </li>
+      <li class="custom-question">
+        <div class="application-label full-width"><div class="text">Current Address (City)</div></div>
+        <div class="application-field full-width required-field">
+          <input required class="card-field-input" type="text"
+                 name="cards[d8c298f6-1020-4054-8908-928a966309f0][field1]">
+        </div>
+      </li>
+      <li class="custom-question">
+        <div class="application-label full-width dropdown"><div class="text">Current Address (State)</div></div>
+        <div class="application-field full-width required-field">
+          <div class="application-dropdown">
+            <select name="cards[d8c298f6-1020-4054-8908-928a966309f0][field2]" required>
+              <option value="">Select...</option>
+              <option>TX</option><option>CA</option>
+            </select>
+          </div>
+        </div>
+      </li>
+      <li class="custom-question">
+        <div class="application-label full-width"><div class="text">Current Address (Postal Code)</div></div>
+        <div class="application-field full-width required-field">
+          <input required class="card-field-input" type="text"
+                 name="cards[d8c298f6-1020-4054-8908-928a966309f0][field3]">
+        </div>
+      </li>
+      <li class="custom-question">
+        <div class="application-label full-width"><div class="text">Current Address (Country)</div></div>
+        <div class="application-field full-width required-field">
+          <input required class="card-field-input" type="text"
+                 name="cards[d8c298f6-1020-4054-8908-928a966309f0][field4]">
+        </div>
+      </li>
+    </ul>
+  </div>
+
+  <button type="submit">Submit application</button>
+</form>
+</body>
+</html>
