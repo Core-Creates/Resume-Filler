@@ -124,6 +124,45 @@ Postings come back ranked by keyword coverage, best fit first:
 python -m resume_filler export applications.csv
 ```
 
+## Portals that need a login
+
+A browser started by the tool has no cookies, so on any portal that puts the
+application behind a sign in it lands on a login page and finds nothing. That is
+most of the enterprise ones.
+
+| Vendor | Login needed |
+| --- | --- |
+| Greenhouse, Lever, Ashby, SmartRecruiters | No. Works live as is. |
+| iCIMS, Workday, Infor CloudSuite | Yes. Use a saved session. |
+
+Sign in once by hand and keep the session:
+
+```bash
+python -m resume_filler --session ~/.resume-filler-session \
+    login https://careers-example.icims.com
+```
+
+A browser opens, you sign in, you press Enter. Every later run that passes the
+same `--session` is already signed in:
+
+```bash
+python -m resume_filler --session ~/.resume-filler-session \
+    inspect --url https://careers-example.icims.com/jobs/1594/candidate
+```
+
+Set `SESSION_DIR` in `.env` to avoid repeating the flag.
+
+Two things worth knowing:
+
+- **Treat that directory as a password.** It holds live login cookies and is
+  worth exactly as much as your account. Keep it outside the repository.
+- **A session-only cookie does not survive the browser closing.** If the site
+  did not offer "remember me", the login ends when the run ends. Do the login
+  and the work in one sitting, or tick "remember me" when signing in.
+
+The tool never automates the sign in itself, and there is no reason it should:
+you do it once by hand, and it does not have to hold your password.
+
 ## Your profile: the answers a resume cannot give
 
 Every form asks for things no resume contains. A street address is required

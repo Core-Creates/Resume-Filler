@@ -961,6 +961,26 @@ def resolve_entry_value(
     return ""
 
 
+# Fields whose correct answer can be "leave it alone" rather than a value.
+BLANK_IS_AN_ANSWER = frozenset({"entry_currently_here"})
+
+
+def _is_answered_by_leaving_blank(
+    canonical_name: str, resume: ResumeData, field: FormField
+) -> bool:
+    """Whether an empty value is the answer rather than a missing one.
+
+    Only true when the data needed to decide is actually present. An empty
+    "I currently work here" on a row the resume never supplied is still a gap;
+    on a role that ended in 2022 it is the correct answer.
+    """
+    if canonical_name not in BLANK_IS_AN_ANSWER or not field.is_grouped:
+        return False
+    if group_source(field.group) != "positions":
+        return False
+    return field.group_index < len(resume.positions)
+
+
 def plan_fill(
     fields: list[FormField],
     resume: ResumeData,
@@ -1000,6 +1020,9 @@ def plan_fill(
         if value:
             match.value = value
             match.status = FillStatus.FILLED
+        elif _is_answered_by_leaving_blank(match.canonical, resume, field):
+            match.status = FillStatus.NOT_APPLICABLE
+            match.reason = "Not applicable to this entry."
         else:
             match.status = FillStatus.SKIPPED_NO_VALUE
             match.reason = (

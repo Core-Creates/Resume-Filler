@@ -19,6 +19,15 @@ class FillStatus(str, Enum):
     SKIPPED_LOW_CONFIDENCE = "skipped_low_confidence"
     SKIPPED_NO_VALUE = "skipped_no_value"
     SKIPPED_BY_POLICY = "skipped_by_policy"
+    NOT_APPLICABLE = "not_applicable"
+    """Considered, and correctly left alone. Distinct from a gap.
+
+    "I currently work here" on a role that ended in 2022 is answered by leaving
+    it unchecked. Reporting that as missing data is wrong twice over: it tells
+    the applicant to go find something that does not exist, and if the control
+    is required it blocks submission over a question already answered.
+    """
+
     FAILED = "failed"
 
 
@@ -229,8 +238,9 @@ class FieldMatch:
 
         SKIPPED_NO_VALUE belongs here: a required field the resume could not
         supply is exactly the case that must block an automatic submission.
+        NOT_APPLICABLE does not, because that question has been answered.
         """
-        return self.status is not FillStatus.FILLED
+        return self.status not in {FillStatus.FILLED, FillStatus.NOT_APPLICABLE}
 
 
 @dataclass
