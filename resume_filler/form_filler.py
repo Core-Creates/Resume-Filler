@@ -1,14 +1,22 @@
 """Executes a fill plan against a live application form.
 
-Submission is opt in and gated twice. ``submit=True`` must be passed explicitly,
-and even then the form is only submitted when every required field was filled
-confidently. A required field the engine could not answer aborts submission and
-leaves the page open for the human to finish.
+Three modes, see ``RunMode``. PREVIEW types nothing, FILL completes the form and
+stops, SUBMIT also sends it and still refuses when a required field could not be
+filled.
+
+Known limit: an employer typeahead backed by its own list, such as Greenhouse's
+School and Degree, is not always selectable. The value is looked up, then typed
+so the list can filter, and the match is clicked if it appears. When it does not
+the field is reported as needing the applicant rather than left holding text the
+widget never committed, which would submit as empty. In FILL mode the form is
+open in front of them, so finishing those two fields by hand costs seconds.
 """
 
 from __future__ import annotations
 
 import logging
+import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +29,7 @@ from .models import (
     FillStatus,
     JobPosting,
     ResumeData,
+    RunMode,
 )
 
 logger = logging.getLogger(__name__)
@@ -56,6 +65,55 @@ COMBOBOX_OPTION_SELECTOR = (
 
 MAX_WIZARD_STEPS = 8
 
+# How long a typeahead needs to fetch and render its options.
+TYPEAHEAD_SETTLE_SECONDS = 1.5
+
+
+def _dismiss_open_menus(driver: Any) -> None:
+    """Close anything currently overlaying the page.
+
+    Selecting from one scripted dropdown can leave its option list open, and it
+    then covers the next control so the click lands on the menu instead. On a
+    real Greenhouse form this failed School and Degree, the two dropdowns
+    following Country.
+    """
+    from selenium.common.exceptions import WebDriverException
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.common.keys import Keys
+
+    try:
+        driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
+    except WebDriverException:
+        logger.debug("Could not send Escape to close an open menu", exc_info=True)
+
+
+def _click_element(driver: Any, element: Any) -> None:
+    """Click, and cope with something sitting on top of the target.
+
+    A normal click is tried first because it exercises the page the way a person
+    would. When an overlay intercepts it, the menu is dismissed and it is tried
+    again, and only then does it fall back to a scripted click, which ignores
+    hit testing entirely.
+    """
+    from selenium.common.exceptions import ElementClickInterceptedException
+
+    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
+    try:
+        element.click()
+        return
+    except ElementClickInterceptedException:
+        logger.debug("Click intercepted, dismissing overlays and retrying")
+
+    _dismiss_open_menus(driver)
+    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
+    try:
+        element.click()
+        return
+    except ElementClickInterceptedException:
+        logger.debug("Still intercepted, falling back to a scripted click")
+
+    driver.execute_script("arguments[0].click();", element)
+
 
 def _fill_combobox(driver: Any, match: FieldMatch, timeout: float) -> None:
     """Drive a scripted dropdown by opening it and clicking the option.
@@ -64,14 +122,68 @@ def _fill_combobox(driver: Any, match: FieldMatch, timeout: float) -> None:
     value looks correct on screen and submits as empty.
     """
     from selenium.common.exceptions import WebDriverException
-    from selenium.webdriver.common.by import By
     from selenium.webdriver.common.keys import Keys
 
     element = match.form_field.handle
     wanted = match.value.strip().lower()
 
-    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
-    element.click()
+    _click_element(driver, element)
+
+    if _select_matching_option(driver, wanted):
+        _dismiss_open_menus(driver)
+        return
+
+    # A typeahead has no options at all until something is typed. Greenhouse
+    # uses one for School and Degree, which query as you type, so opening it and
+    # looking for a match finds an empty list every time.
+    try:
+        element.send_keys(match.value)
+    except WebDriverException as exc:
+        raise ValueError(f"Could not type into the dropdown for {match.value!r}") from exc
+
+    time.sleep(TYPEAHEAD_SETTLE_SECONDS)
+    if _select_matching_option(driver, wanted):
+        _dismiss_open_menus(driver)
+        return
+
+    # Last resort: accept whatever the widget has highlighted.
+    try:
+        element.send_keys(Keys.ENTER)
+    except WebDriverException as exc:
+        raise ValueError(f"Could not select {match.value!r} in the dropdown") from exc
+
+    committed = (element.get_attribute("value") or element.text or "").strip().lower()
+    if wanted and not _values_agree(wanted, committed):
+        raise ValueError(
+            f"Dropdown did not offer {match.value!r}. "
+            "It may not be in this employer's list; choose it yourself."
+        )
+
+
+def _values_agree(wanted: str, committed: str) -> bool:
+    """Whether the widget settled on what was asked for.
+
+    Compared loosely, because a dropdown routinely displays a shortened or
+    reordered form of the option: "UT San Antonio" for "The University of Texas
+    at San Antonio". Demanding an exact substring reports a correct selection as
+    a failure.
+    """
+    if not committed:
+        return False
+    if wanted in committed or committed in wanted:
+        return True
+    wanted_words = {w for w in re.findall(r"[a-z0-9]+", wanted) if len(w) > 2}
+    committed_words = {w for w in re.findall(r"[a-z0-9]+", committed) if len(w) > 2}
+    if not wanted_words:
+        return False
+    overlap = len(wanted_words & committed_words) / len(wanted_words)
+    return overlap >= 0.5
+
+
+def _select_matching_option(driver: Any, wanted: str) -> bool:
+    """Click the visible option matching ``wanted``. Returns whether it did."""
+    from selenium.common.exceptions import WebDriverException
+    from selenium.webdriver.common.by import By
 
     options = driver.find_elements(By.CSS_SELECTOR, COMBOBOX_OPTION_SELECTOR)
     for want_exact in (True, False):
@@ -82,20 +194,10 @@ def _fill_combobox(driver: Any, match: FieldMatch, timeout: float) -> None:
                 continue
             if not text:
                 continue
-            if (text == wanted) if want_exact else (wanted in text):
-                option.click()
-                return
-
-    # Some widgets only render options after the user types a filter.
-    try:
-        element.send_keys(match.value)
-        element.send_keys(Keys.ENTER)
-    except WebDriverException as exc:
-        raise ValueError(f"Could not select {match.value!r} in the dropdown") from exc
-
-    committed = (element.get_attribute("value") or element.text or "").strip().lower()
-    if wanted and wanted not in committed:
-        raise ValueError(f"Dropdown did not commit {match.value!r}")
+            if (text == wanted) if want_exact else (wanted in text or text in wanted):
+                _click_element(driver, option)
+                return True
+    return False
 
 
 def _apply_one(driver: Any, match: FieldMatch, timeout: float) -> None:
@@ -308,10 +410,14 @@ def apply_to_job(
     cover_letter_path: str = "",
     threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
     timeout: float = 15.0,
-    submit: bool = False,
+    mode: RunMode = RunMode.PREVIEW,
     max_steps: int = MAX_WIZARD_STEPS,
 ) -> ApplicationResult:
-    """Open a posting, fill the application, and submit only if explicitly told to.
+    """Open a posting, fill the application, and go only as far as ``mode`` allows.
+
+    PREVIEW types nothing. FILL completes the form and stops, leaving it for the
+    applicant to check and send. SUBMIT also clicks Submit, and still refuses
+    when a required field could not be filled.
 
     Handles both single page forms and multi-step wizards. A single page form
     simply has no Continue button, so the wizard loop exits after one pass.
@@ -340,15 +446,23 @@ def apply_to_job(
         cover_letter_path=cover_letter_path,
         threshold=threshold,
         timeout=timeout,
-        dry_run=not submit,
+        dry_run=not mode.types_anything,
         max_steps=max_steps,
     )
 
     result = ApplicationResult(posting=posting, status=ApplicationStatus.PREPARED, matches=matches)
 
-    if not submit:
+    if mode is RunMode.PREVIEW:
         result.message = (
-            f"Dry run. {result.filled_count} fields ready, {result.review_count} need review."
+            f"Preview only, nothing typed. {result.filled_count} fields ready, "
+            f"{result.review_count} need you."
+        )
+        return result
+
+    if mode is RunMode.FILL:
+        result.message = (
+            f"Filled {result.filled_count} field(s) and stopped. "
+            f"{result.review_count} still need you. Nothing was submitted."
         )
         return result
 

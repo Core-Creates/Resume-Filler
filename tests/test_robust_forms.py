@@ -17,7 +17,7 @@ import pytest
 from resume_filler import form_filler
 from resume_filler.extractors import fields_from_html
 from resume_filler.field_map import match_form, plan_fill
-from resume_filler.models import FillStatus, FormField, JobPosting
+from resume_filler.models import FillStatus, FormField, JobPosting, RunMode
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -299,9 +299,14 @@ class StubOption:
     def __init__(self, text: str) -> None:
         self.text = text
         self.clicked = False
+        self.keys: list[str] = []
 
     def click(self) -> None:
         self.clicked = True
+
+    def send_keys(self, value: str) -> None:
+        # The <body> stand-in receives Escape when menus are dismissed.
+        self.keys.append(value)
 
 
 class ComboboxElement:
@@ -330,6 +335,10 @@ class ComboboxDriver:
     def __init__(self, options: list[StubOption]) -> None:
         self._options = options
         self.current_url = "https://example.com/apply"
+
+    def find_element(self, by: object, selector: str) -> StubOption:
+        # Stands in for the <body> that Escape is sent to.
+        return StubOption("")
 
     def execute_script(self, script: str, *args: object) -> str:
         return ""
@@ -377,7 +386,7 @@ class TestComboboxFilling:
             _resume_with_country(),
         )[0]
 
-        with pytest.raises(ValueError, match="did not commit"):
+        with pytest.raises(ValueError, match="did not offer"):
             form_filler._fill_combobox(driver, match, timeout=5)
 
 
@@ -610,7 +619,7 @@ class TestWizardIntegration:
 
         monkeypatch.setattr(form_filler, "_click_first", click)
         result = form_filler.apply_to_job(
-            driver, JobPosting(url="https://example.com/j"), resume, submit=True
+            driver, JobPosting(url="https://example.com/j"), resume, mode=RunMode.SUBMIT
         )
         labels = [m.form_field.label for m in result.matches]
         assert labels == ["First Name", "Email", "City"]
@@ -637,7 +646,7 @@ class TestWizardIntegration:
             lambda d, x, t: d.advance() if x is form_filler.NEXT_BUTTON_XPATHS else True,
         )
         result = form_filler.apply_to_job(
-            driver, JobPosting(url="https://example.com/j"), resume, submit=True
+            driver, JobPosting(url="https://example.com/j"), resume, mode=RunMode.SUBMIT
         )
         assert result.status.value == "needs_review"
         assert any(g.form_field.label == "Desired Salary" for g in result.required_gaps)

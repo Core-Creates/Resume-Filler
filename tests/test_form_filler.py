@@ -11,7 +11,7 @@ import pytest
 
 from resume_filler import form_filler
 from resume_filler.extractors import fields_from_html
-from resume_filler.models import ApplicationStatus, FillStatus, JobPosting
+from resume_filler.models import ApplicationStatus, FillStatus, JobPosting, RunMode
 
 
 class StubElement:
@@ -149,7 +149,7 @@ class TestSubmissionGuardrails:
             lambda driver, xpaths, timeout: submitted.append(xpaths[0]) or True,
         )
         result = form_filler.apply_to_job(
-            stub_driver, JobPosting(url="https://example.com/j"), incomplete, submit=True
+            stub_driver, JobPosting(url="https://example.com/j"), incomplete, mode=RunMode.SUBMIT
         )
         assert result.status is ApplicationStatus.NEEDS_REVIEW
         assert "required field" in result.message
@@ -172,7 +172,7 @@ class TestSubmissionGuardrails:
             JobPosting(url="https://example.com/j"),
             resume,
             resume_path=str(resume_file),
-            submit=True,
+            mode=RunMode.SUBMIT,
         )
         assert result.status is ApplicationStatus.SUBMITTED
         assert form_filler.SUBMIT_BUTTON_XPATHS in clicked

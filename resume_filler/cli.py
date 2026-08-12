@@ -21,7 +21,7 @@ from .config import Settings
 from .extractors import fields_from_html
 from .field_map import plan_fill
 from .logging_setup import configure_logging
-from .models import ApplicationResult, ApplicationStatus, JobPosting
+from .models import ApplicationResult, ApplicationStatus, JobPosting, RunMode
 from .profile import load_profile
 from .reporting import (
     diagnose_sparse_scan,
@@ -44,6 +44,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable debug logging.")
     parser.add_argument("--env-file", help="Path to a .env file. Defaults to ./.env")
+    parser.add_argument(
+        "--browser", choices=("chrome", "edge", "firefox"), help="Which browser to drive."
+    )
     parser.add_argument(
         "--profile",
         help="JSON file of answers your resume does not contain. Defaults to ./profile.json",
@@ -70,6 +73,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     apply_cmd = subparsers.add_parser("apply", help="Fill applications for a list of postings.")
     origin = apply_cmd.add_mutually_exclusive_group(required=True)
+    origin.add_argument("--url", help="A single application URL.")
     origin.add_argument("--urls", help="Text file with one application URL per line.")
     origin.add_argument("--csv", help="CSV with a url column.")
     origin.add_argument("--greenhouse", help="Greenhouse board token, for example 'stripe'.")
@@ -78,10 +82,19 @@ def build_parser() -> argparse.ArgumentParser:
     apply_cmd.add_argument("--keywords", nargs="*", help="Only keep postings matching these.")
     apply_cmd.add_argument("--location", default="", help="Only keep postings in this location.")
     apply_cmd.add_argument("--limit", type=int, default=10, help="Maximum postings to process.")
-    apply_cmd.add_argument(
+    depth = apply_cmd.add_mutually_exclusive_group()
+    depth.add_argument(
+        "--fill",
+        action="store_true",
+        help=(
+            "Fill the form in a real browser and stop, leaving it open for you to "
+            "check and submit yourself. Never submits."
+        ),
+    )
+    depth.add_argument(
         "--submit",
         action="store_true",
-        help="Actually submit. Without this flag the run is a dry run that types nothing.",
+        help="Fill and submit. Still refuses when a required field could not be filled.",
     )
     apply_cmd.add_argument(
         "--skip-seen", action="store_true", help="Skip postings already in the tracker."
@@ -137,6 +150,8 @@ def _resolve_settings(args: argparse.Namespace) -> Settings:
         settings.profile_path = Path(args.profile).expanduser()
     if getattr(args, "session", None):
         settings.session_dir = Path(args.session).expanduser()
+    if getattr(args, "browser", None):
+        settings.browser = args.browser
     return settings
 
 
@@ -217,7 +232,9 @@ def _load_postings(args: argparse.Namespace) -> list[JobPosting]:
         return sources.filter_postings(
             postings, keywords=getattr(args, "keywords", None), location=args.location
         )
-    if args.urls:
+    if getattr(args, "url", None):
+        postings = [JobPosting(url=args.url, source="url")]
+    elif args.urls:
         postings = sources.from_urls_file(args.urls)
     elif args.csv:
         postings = sources.from_csv(args.csv)
@@ -254,10 +271,21 @@ def command_apply(args: argparse.Namespace, settings: Settings) -> int:
         print("\nNo postings to process.")
         return 0
 
-    mode = "SUBMIT" if args.submit else "DRY RUN"
-    print(f"\nProcessing {len(postings)} posting(s) in {mode} mode.")
-    if not args.submit:
-        print("Nothing will be typed or submitted. Pass --submit to act on the plan.")
+    if args.submit:
+        mode = RunMode.SUBMIT
+    elif args.fill:
+        mode = RunMode.FILL
+    else:
+        mode = RunMode.PREVIEW
+
+    print(f"\nProcessing {len(postings)} posting(s), mode: {mode.value}.")
+    if mode is RunMode.PREVIEW:
+        print("Nothing will be typed. Pass --fill to complete the form in a browser,")
+        print("or --submit to fill and send it.")
+    elif mode is RunMode.FILL:
+        print("The form will be filled and left open for you to check and submit.")
+        if settings.headless:
+            print("HEADLESS is true, so you will not see it. Set HEADLESS=false in .env.")
 
     from .browser import managed_driver
     from .form_filler import apply_to_job
@@ -276,10 +304,12 @@ def command_apply(args: argparse.Namespace, settings: Settings) -> int:
                     cover_letter_path=cover_letter,
                     threshold=settings.confidence_threshold,
                     timeout=settings.page_timeout,
-                    submit=args.submit,
+                    mode=mode,
                 )
                 results.append(result)
                 print(render_result(result))
+                print()
+                print(render_next_steps(result.matches))
                 if args.tailor:
                     from .tailoring import keyword_gap, render_keyword_gap, write_cover_letter
 
@@ -290,6 +320,9 @@ def command_apply(args: argparse.Namespace, settings: Settings) -> int:
                         letter = write_cover_letter(posting, resume, settings.output_dir, gap)
                         print(f"  Cover letter draft: {letter}")
                 tracker.record(result)
+
+                if mode is RunMode.FILL:
+                    _hold_for_review(posting, last=posting is postings[-1])
     except KeyboardInterrupt:
         print("\nInterrupted. Recording what completed so far.", file=sys.stderr)
 
@@ -341,6 +374,29 @@ def command_tailor(args: argparse.Namespace, settings: Settings) -> int:
 
     print("\nRanked best fit first by keyword coverage.")
     return 0
+
+
+def _hold_for_review(posting: JobPosting, last: bool) -> None:
+    """Keep the filled form on screen until the applicant is done with it.
+
+    Filling a form and then closing the window before anyone can look at it
+    would be worse than not filling it, so this waits. With no terminal
+    attached there is nobody to wait for, and it says so rather than blocking a
+    script forever.
+    """
+    print()
+    print("  The form is filled and waiting in the browser.")
+    print("  Check it, fix anything you want, and submit it yourself.")
+
+    if not (sys.stdin and sys.stdin.isatty()):
+        print("  Not running interactively, so the browser will close now.")
+        return
+
+    prompt = "  Press Enter when you are done" + ("" if last else " to move to the next posting")
+    try:
+        input(f"{prompt}... ")
+    except (EOFError, KeyboardInterrupt):
+        print()
 
 
 def command_init(args: argparse.Namespace, settings: Settings) -> int:
@@ -517,6 +573,15 @@ def main(argv: list[str] | None = None) -> int:
     except (FileNotFoundError, ValueError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 2
+    except Exception as exc:  # noqa: BLE001 - a stack trace helps nobody here
+        from .browser import explain_driver_failure
+
+        explanation = explain_driver_failure(exc, settings.browser)
+        if explanation:
+            print(f"\n{explanation}", file=sys.stderr)
+            logger.debug("Underlying error", exc_info=True)
+            return 2
+        raise
     except KeyboardInterrupt:
         print("\nCancelled.", file=sys.stderr)
         return 130
