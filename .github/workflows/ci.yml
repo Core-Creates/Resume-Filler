@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test on Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Lint with ruff
+        run: ruff check .
+
+      - name: Check formatting
+        run: ruff format --check .
+
+      - name: Type check with mypy
+        run: mypy resume_filler
+
+      - name: Run tests
+        run: pytest --cov=resume_filler --cov-report=term-missing
+
+  guard:
+    name: Guard against regressions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fail if credentials are hardcoded
+        run: |
+          if grep -rnE '(password|passwd|secret|api_key)\s*=\s*["'"'"'][^"'"'"']{4,}' \
+              --include='*.py' resume_filler/; then
+            echo "A literal credential appears in source. Move it to the environment."
+            exit 1
+          fi
+
+      - name: Fail if a virtualenv or vendored installer is committed
+        run: |
+          if git ls-files | grep -E '(^|/)(get-pip\.py|node_modules/|env_[^/]*/|venv/|\.venv/)'; then
+            echo "Build artifacts must not be committed."
+            exit 1
+          fi
