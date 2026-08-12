@@ -407,12 +407,49 @@ CANONICAL_FIELDS: tuple[CanonicalField, ...] = (
         name="free_text_question",
         patterns=(
             (r"\bwhy\s*(do\s*you\s*want|are\s*you\s*interested)\b", 1.0),
-            (r"\btell\s*us\s*about\b", 0.95),
+            (r"\btell\s*(us|me)\s*about\b", 0.95),
             (r"\badditional\s*information\b", 0.85),
+            # Ashby's prompts open with these and matched nothing before.
+            (r"\bdescribe\s+(a|an|your|the)\b", 1.0),
+            (r"\bwhat.?s\s+something\b", 1.0),
+            (r"\bwalk\s+(us|me)\s+through\b", 0.95),
+            (r"\bgive\s+(us|me)\s+an\s+example\b", 0.95),
+            (r"\bhow\s+(would|did)\s+you\b", 0.90),
         ),
         policy=FillPolicy.REVIEW_ONLY,
         allow_multiple=True,
         note="Custom essay question. Answer this yourself.",
+    ),
+    # Self-identification questions are often rendered as a bare list of radios
+    # with no group label at all, so the only text available is the option
+    # itself: "Man", "Woman", "Under 30". Matching the question text alone left
+    # every one of those merely unrecognised, which loses the reason it must not
+    # be answered automatically. Restricted to choice controls, where these
+    # phrasings are unambiguous.
+    CanonicalField(
+        name="demographic_option",
+        patterns=(
+            (r"^(man|woman)$", 1.0),
+            (r"\bnon.?binary\b", 1.0),
+            (r"\bgender\s*identity\b", 1.0),
+            (r"\btransgender\b", 1.0),
+            (r"^under\s*\d+$", 1.0),
+            # Normalisation strips punctuation, so "30-39" arrives as "30 39".
+            (r"^\d{2}\s*-?\s*\d{2}$", 0.95),
+            (r"^\d+\s*or\s*(older|over|above)$", 1.0),
+            (r"\bprefer\s*not\s*to\s*(answer|say|disclose)\b", 1.0),
+            (r"\bdecline\s*to\s*(self.?identify|answer|state)\b", 1.0),
+            (r"\bhispanic\s*or\s*latino\b", 1.0),
+            (r"\bblack\s*or\s*african\s*american\b", 1.0),
+            (r"\bamerican\s*indian\b", 1.0),
+            (r"\bnative\s*hawaiian\b", 1.0),
+            (r"\btwo\s*or\s*more\s*races\b", 1.0),
+            (r"\bprotected\s*veteran\b", 1.0),
+            (r"\byes,?\s*i\s*have\s*a\s*disability\b", 1.0),
+        ),
+        policy=FillPolicy.REVIEW_ONLY,
+        allow_multiple=True,
+        note="Voluntary self identification. Left blank by design.",
     ),
 )
 
@@ -556,7 +593,28 @@ def score_field(form_field: FormField, canonical: CanonicalField) -> float:
     ):
         return max(DOCUMENT_UPLOAD_CONFIDENCE, _best_attribute_score(form_field, canonical))
 
+    # A textarea with a long or interrogative label is an essay prompt whatever
+    # its exact wording. Employers phrase these however they like, so a pattern
+    # list will always trail behind; the shape of the control is the reliable
+    # signal, and the consequence of catching one is only that the applicant is
+    # told to answer it themselves.
+    if (
+        canonical.name == "free_text_question"
+        and form_field.tag == "textarea"
+        and _looks_like_a_prompt(form_field.label or form_field.aria_label)
+    ):
+        return max(ESSAY_PROMPT_CONFIDENCE, _best_attribute_score(form_field, canonical))
+
     return _best_attribute_score(form_field, canonical)
+
+
+ESSAY_PROMPT_CONFIDENCE = 0.70
+MIN_PROMPT_LENGTH = 40
+
+
+def _looks_like_a_prompt(label: str) -> bool:
+    text = label.strip()
+    return bool(text) and (text.endswith("?") or len(text) >= MIN_PROMPT_LENGTH)
 
 
 def _best_attribute_score(form_field: FormField, canonical: CanonicalField) -> float:
@@ -634,6 +692,10 @@ def accept_kind(accept: str) -> str:
 
 def _is_type_compatible(form_field: FormField, canonical_name: str) -> bool:
     """Reject pairings that cannot possibly work, such as text into a file input."""
+    if canonical_name == "demographic_option":
+        # Only meaningful for a bare option in a choice group. A free text field
+        # containing the word "woman" is not a self-identification control.
+        return form_field.is_choice_input
     if form_field.is_file_input:
         # An input that only takes images is never the resume upload, whatever
         # its label says. Without this the engine uploads the resume PDF into
