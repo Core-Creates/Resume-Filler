@@ -33,6 +33,41 @@ Requires Python 3.10 or newer, plus Chrome, Edge, or Firefox. Selenium 4.6+
 downloads the matching driver binary on its own, so there is nothing else to
 install.
 
+## Standalone executable
+
+To run it from anywhere without a Python install, or to hand it to someone else:
+
+```bash
+pip install -r requirements-dev.txt
+pyinstaller resume-filler.spec
+```
+
+That produces `dist/resume-filler.exe`, around 47 MB, with no external
+dependency except a browser. Copy it anywhere and run it:
+
+```powershell
+resume-filler.exe init
+resume-filler.exe apply --url "<application url>" --fill
+```
+
+A packaged build keeps its configuration in a per-user directory
+(`%APPDATA%\resume-filler` on Windows) rather than the current folder, so it
+behaves the same wherever it is launched from. A checkout still keeps config
+beside the code, so nothing changes for development.
+
+Three things to expect:
+
+- **Antivirus may object.** Unsigned PyInstaller executables are flagged
+  routinely, and one that drives a browser trips heuristics harder. On your own
+  machine, whitelist it. Handing it to someone else means they will see a
+  SmartScreen warning unless it is code signed.
+- **A browser is still required.** An executable cannot bundle Chrome.
+- **The first launch is slow.** A one-file build unpacks itself to a temporary
+  directory each run, several seconds before anything appears.
+
+This project is GPL-3.0, so if you distribute the executable you need to offer
+the source with it. Pointing at this repository satisfies that.
+
 ## Configure
 
 ```bash

@@ -401,6 +401,7 @@ def _hold_for_review(posting: JobPosting, last: bool) -> None:
 
 def command_init(args: argparse.Namespace, settings: Settings) -> int:
     """Set up .env and profile.json so the first real command just works."""
+    from .paths import default_config_dir, is_frozen
     from .setup_wizard import (
         Prompter,
         find_resumes,
@@ -410,8 +411,11 @@ def command_init(args: argparse.Namespace, settings: Settings) -> int:
     )
 
     prompter = Prompter(interactive=None if not args.yes else False)
-    root = Path.cwd()
+    root = default_config_dir()
+    root.mkdir(parents=True, exist_ok=True)
     env_path, profile_path = root / ".env", root / "profile.json"
+    if is_frozen():
+        print(f"Configuration will be kept in {root}")
 
     print("Resume-Filler setup")
     print("-" * 60)
