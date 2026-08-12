@@ -47,6 +47,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--profile",
         help="JSON file of answers your resume does not contain. Defaults to ./profile.json",
     )
+    parser.add_argument(
+        "--session",
+        help=(
+            "Directory where the browser keeps cookies, so a login survives between "
+            "runs. Required for portals that put the application behind a sign in."
+        ),
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     parse_cmd = subparsers.add_parser("parse", help="Parse a resume and print the result.")
@@ -102,6 +109,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--cover-letters", action="store_true", help="Also write a cover letter draft for each."
     )
 
+    login_cmd = subparsers.add_parser(
+        "login", help="Open a browser so you can sign in once; the session is saved."
+    )
+    login_cmd.add_argument("url", help="The portal to open, for example your ATS sign-in page.")
+
     export_cmd = subparsers.add_parser("export", help="Export the application tracker to CSV.")
     export_cmd.add_argument("destination", nargs="?", default="applications.csv")
 
@@ -117,6 +129,8 @@ def _resolve_settings(args: argparse.Namespace) -> Settings:
         settings.resume_path = Path(resume_override).expanduser()
     if getattr(args, "profile", None):
         settings.profile_path = Path(args.profile).expanduser()
+    if getattr(args, "session", None):
+        settings.session_dir = Path(args.session).expanduser()
     return settings
 
 
@@ -170,7 +184,7 @@ def command_inspect(args: argparse.Namespace, settings: Settings) -> int:
     from .browser import managed_driver
     from .form_filler import fill_form
 
-    with managed_driver(settings.browser, settings.headless) as driver:
+    with managed_driver(settings.browser, settings.headless, settings.session_dir) as driver:
         driver.get(args.url)
         matches = fill_form(
             driver,
@@ -242,7 +256,7 @@ def command_apply(args: argparse.Namespace, settings: Settings) -> int:
     cover_letter = str(settings.cover_letter_path) if settings.cover_letter_path else ""
 
     try:
-        with managed_driver(settings.browser, settings.headless) as driver:
+        with managed_driver(settings.browser, settings.headless, settings.session_dir) as driver:
             for posting in postings:
                 result = apply_to_job(
                     driver,
@@ -319,6 +333,63 @@ def command_tailor(args: argparse.Namespace, settings: Settings) -> int:
     return 0
 
 
+def command_login(args: argparse.Namespace, settings: Settings) -> int:
+    """Open a browser, wait while the user signs in, and keep the session.
+
+    Most application portals put the form behind a sign in, so a driver that
+    starts with no cookies lands on a login page and finds nothing. There is no
+    good way to automate the sign in itself, and no reason to: the applicant
+    does it once by hand and every later run reuses it.
+    """
+    if not settings.session_dir:
+        print(
+            "Error: no session directory. Pass --session <dir> or set SESSION_DIR "
+            "in .env, otherwise there is nowhere to keep the login.",
+            file=sys.stderr,
+        )
+        return 2
+
+    from .browser import managed_driver
+
+    print(f"Opening {args.url}")
+    print(f"Session will be kept in {settings.session_dir.resolve()}")
+    print()
+    print("Sign in in the browser window, then come back here and press Enter.")
+    print("Close nothing yourself; this will shut the browser down for you.")
+
+    try:
+        with managed_driver(settings.browser, headless=False, profile_dir=settings.session_dir):
+            input("\nPress Enter once you are signed in... ")
+    except KeyboardInterrupt:
+        print("\nCancelled. Nothing was saved.", file=sys.stderr)
+        return 130
+    except Exception as exc:  # noqa: BLE001 - report rather than traceback
+        message = str(exc)
+        if "user data directory is already in use" in message.lower():
+            print(
+                "\nError: that session directory is in use by a running browser. "
+                "Close every window of that browser and try again.",
+                file=sys.stderr,
+            )
+            return 2
+        print(f"\nError: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"\nSession saved to {settings.session_dir.resolve()}")
+    print("Pass the same --session to inspect or apply and they will be signed in.")
+    print()
+    print("Two things to know:")
+    print(
+        "  Treat that directory as a password. It holds live login cookies and is "
+        "worth exactly as much as your account."
+    )
+    print(
+        "  If the site issued a session-only cookie, the login ends when the browser "
+        "closes. Tick 'remember me' at sign in, or do the login and the run together."
+    )
+    return 0
+
+
 def command_export(args: argparse.Namespace, settings: Settings) -> int:
     tracker = Tracker(settings.database_path)
     path = tracker.export_csv(args.destination)
@@ -337,6 +408,7 @@ def main(argv: list[str] | None = None) -> int:
         "inspect": command_inspect,
         "apply": command_apply,
         "tailor": command_tailor,
+        "login": command_login,
         "export": command_export,
     }
 

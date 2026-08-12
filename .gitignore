@@ -187,3 +187,7 @@ runs/
 
 # Personal answers supplementing the resume. Never commit this.
 profile.json
+
+# Browser session cookies. Never commit these.
+.resume-filler-session/
+session/

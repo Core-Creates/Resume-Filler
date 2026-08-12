@@ -18,6 +18,7 @@ STATUS_LABELS: dict[FillStatus, str] = {
     FillStatus.SKIPPED_LOW_CONFIDENCE: "[LOW ]",
     FillStatus.SKIPPED_NO_VALUE: "[GAP ]",
     FillStatus.SKIPPED_BY_POLICY: "[YOU ]",
+    FillStatus.NOT_APPLICABLE: "[ n/a]",
     FillStatus.FAILED: "[FAIL]",
 }
 
@@ -117,7 +118,7 @@ def render_plan(matches: list[FieldMatch]) -> str:
         lines.append("")
     lines.append(
         "  [FILL] ready   [YOU ] your call   [GAP ] missing from resume   "
-        "[----] unrecognised   * required"
+        "[ n/a] not applicable   [----] unrecognised   * required"
     )
     return "\n".join(lines)
 
