@@ -63,3 +63,7 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q --strict-markers"
+# Make the repo root importable so a bare `pytest` works without an editable
+# install. Without this, only `python -m pytest` succeeds, because that form
+# puts the working directory on sys.path and the bare entry point does not.
+pythonpath = ["."]
