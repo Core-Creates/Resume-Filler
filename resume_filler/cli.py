@@ -25,6 +25,7 @@ from .models import ApplicationResult, ApplicationStatus, JobPosting
 from .profile import load_profile
 from .reporting import (
     diagnose_sparse_scan,
+    render_next_steps,
     render_plan,
     render_result,
     render_resume_summary,
@@ -109,6 +110,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--cover-letters", action="store_true", help="Also write a cover letter draft for each."
     )
 
+    init_cmd = subparsers.add_parser("init", help="Set up .env and profile.json. Start here.")
+    init_cmd.add_argument(
+        "--yes", action="store_true", help="Take every default without prompting."
+    )
+
     login_cmd = subparsers.add_parser(
         "login", help="Open a browser so you can sign in once; the session is saved."
     )
@@ -174,7 +180,9 @@ def command_inspect(args: argparse.Namespace, settings: Settings) -> int:
             profile=load_profile(settings.profile_path),
         )
         print(f"\nFill plan for {args.html}")
-        print(render_plan(matches))
+        print(render_plan(matches, verbose=args.verbose))
+        print()
+        print(render_next_steps(matches))
         hint = diagnose_sparse_scan(html, len(fields))
         if hint:
             print()
@@ -195,7 +203,9 @@ def command_inspect(args: argparse.Namespace, settings: Settings) -> int:
             dry_run=True,
         )
     print(f"\nFill plan for {args.url}")
-    print(render_plan(matches))
+    print(render_plan(matches, verbose=args.verbose))
+    print()
+    print(render_next_steps(matches))
     return 0
 
 
@@ -333,6 +343,95 @@ def command_tailor(args: argparse.Namespace, settings: Settings) -> int:
     return 0
 
 
+def command_init(args: argparse.Namespace, settings: Settings) -> int:
+    """Set up .env and profile.json so the first real command just works."""
+    from .setup_wizard import (
+        Prompter,
+        find_resumes,
+        render_env,
+        render_profile,
+        suggested_profile,
+    )
+
+    prompter = Prompter(interactive=None if not args.yes else False)
+    root = Path.cwd()
+    env_path, profile_path = root / ".env", root / "profile.json"
+
+    print("Resume-Filler setup")
+    print("-" * 60)
+
+    # 1. The resume.
+    candidates = find_resumes()
+    resume_path: Path | None = None
+    if candidates:
+        labels = [str(p) for p in candidates]
+        index = prompter.choose("Which resume should be the default?", labels)
+        resume_path = candidates[index] if index >= 0 else None
+    if resume_path is None:
+        typed = prompter.ask("\nPath to your resume PDF", "")
+        resume_path = Path(typed).expanduser() if typed else None
+
+    if resume_path and resume_path.is_file():
+        print(f"\nUsing {resume_path}")
+        try:
+            resume = parse_resume(resume_path)
+            print()
+            print(render_resume_summary(resume))
+            if not resume.email or not resume.full_name:
+                print(
+                    "\nWarning: the name or email did not come through. "
+                    "Check the resume before relying on this."
+                )
+        except (FileNotFoundError, ValueError) as exc:
+            print(f"\nCould not parse it: {exc}")
+            resume = None
+    else:
+        print("\nNo resume selected. Set RESUME_PATH in .env when you have one.")
+        resume_path, resume = Path("resume.pdf"), None
+
+    # 2. The config file.
+    session_dir = root / ".rf-session"
+    if env_path.exists() and not prompter.confirm(f"\n{env_path.name} exists. Replace it?", False):
+        print(f"Kept the existing {env_path.name}.")
+    else:
+        env_path.write_text(render_env(resume_path, session_dir), encoding="utf-8")
+        print(f"\nWrote {env_path}")
+
+    # 3. The profile.
+    if profile_path.exists() and not prompter.confirm(
+        f"{profile_path.name} exists. Replace it?", False
+    ):
+        print(f"Kept the existing {profile_path.name}.")
+    else:
+        values = suggested_profile(resume)
+        print("\nA few answers no resume contains. Press Enter to skip any of them.")
+        values["address_line1"] = prompter.ask("  Street address", values["address_line1"])
+        values["city"] = prompter.ask("  City", values["city"])
+        values["state"] = prompter.ask("  State", values["state"])
+        values["postal_code"] = prompter.ask("  Postal code", values["postal_code"])
+        values["country"] = prompter.ask("  Country", values["country"] or "United States")
+        values["work_authorization"] = prompter.ask(
+            "  Authorised to work without sponsorship? (Yes/No)", values["work_authorization"]
+        )
+        values["how_did_you_hear"] = prompter.ask(
+            "  Usual answer to 'how did you hear about us'", values["how_did_you_hear"]
+        )
+        profile_path.write_text(render_profile(values), encoding="utf-8")
+        print(f"\nWrote {profile_path}")
+
+    print()
+    print("-" * 60)
+    print("Ready. Try one of these:")
+    print()
+    print("  resume-filler parse                     check what your resume gives us")
+    print("  resume-filler inspect --html page.html  preview a saved application form")
+    print("  resume-filler tailor --html page.html   see how well you match a posting")
+    print()
+    print("Nothing types or submits anything unless you pass --submit.")
+    print("Both files are gitignored. Never commit them.")
+    return 0
+
+
 def command_login(args: argparse.Namespace, settings: Settings) -> int:
     """Open a browser, wait while the user signs in, and keep the session.
 
@@ -408,6 +507,7 @@ def main(argv: list[str] | None = None) -> int:
         "inspect": command_inspect,
         "apply": command_apply,
         "tailor": command_tailor,
+        "init": command_init,
         "login": command_login,
         "export": command_export,
     }

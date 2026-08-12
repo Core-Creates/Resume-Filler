@@ -87,15 +87,104 @@ def _collapse_empty_group_rows(matches: list[FieldMatch]) -> tuple[list[FieldMat
     return kept, notes
 
 
-def render_plan(matches: list[FieldMatch]) -> str:
-    """A table of every control on the form and what the engine decided."""
+def render_summary(matches: list[FieldMatch]) -> str:
+    """One line telling you whether this form is nearly done or barely started.
+
+    Scanning a hundred rows to work that out is the tool making you do the work
+    it was supposed to save.
+    """
+    ready = sum(1 for m in matches if m.status is FillStatus.FILLED)
+    yours = sum(1 for m in matches if m.status is FillStatus.SKIPPED_BY_POLICY)
+    gaps = sum(1 for m in matches if m.status is FillStatus.SKIPPED_NO_VALUE)
+    failed = sum(1 for m in matches if m.status is FillStatus.FAILED)
+    unknown = sum(1 for m in matches if m.status is FillStatus.SKIPPED_NO_MATCH)
+
+    parts = [f"{ready} ready"]
+    if yours:
+        parts.append(f"{yours} your call")
+    if gaps:
+        parts.append(f"{gaps} missing")
+    if failed:
+        parts.append(f"{failed} failed")
+    if unknown:
+        parts.append(f"{unknown} unrecognised")
+    return "  " + "   ".join(parts)
+
+
+def render_next_steps(matches: list[FieldMatch]) -> str:
+    """The short list of what actually needs the applicant.
+
+    Everything else in the plan is either done or nothing they can act on.
+    Unused repeating rows are dropped first: a blank Workday work-history row is
+    not thirty-six things the applicant forgot.
+    """
+    matches, _ = _collapse_empty_group_rows(matches)
+    yours = [m for m in matches if m.status is FillStatus.SKIPPED_BY_POLICY]
+    gaps = [m for m in matches if m.status is FillStatus.SKIPPED_NO_VALUE]
+    failed = [m for m in matches if m.status is FillStatus.FAILED]
+
+    if not (yours or gaps or failed):
+        return "  Nothing left for you. Every recognised field is ready."
+
+    lines: list[str] = []
+    if yours:
+        lines.append(f"  You need to answer these {len(yours)} yourself:")
+        lines.extend(f"    - {_truncate(m.form_field.describe(), 70)}" for m in _unique(yours))
+        lines.append("")
+    if gaps:
+        keys = sorted({m.canonical for m in gaps if m.canonical})
+        lines.append(f"  Missing from your resume ({len(gaps)}):")
+        lines.extend(f"    - {_truncate(m.form_field.describe(), 70)}" for m in _unique(gaps))
+        if keys:
+            lines.append("")
+            lines.append(f"    Add to profile.json to fill these next time: {', '.join(keys)}")
+        lines.append("")
+    if failed:
+        lines.append(f"  Could not be filled ({len(failed)}):")
+        lines.extend(
+            f"    - {_truncate(m.form_field.describe(), 40)}: {_truncate(m.reason, 60)}"
+            for m in _unique(failed)
+        )
+    return "\n".join(lines).rstrip()
+
+
+def _unique(matches: list[FieldMatch]) -> list[FieldMatch]:
+    """Collapse repeated labels, which repeating sections produce by the dozen."""
+    seen: set[str] = set()
+    result: list[FieldMatch] = []
+    for match in matches:
+        key = match.form_field.describe()
+        if key not in seen:
+            seen.add(key)
+            result.append(match)
+    return result
+
+
+def render_plan(matches: list[FieldMatch], *, verbose: bool = False) -> str:
+    """A table of every control on the form and what the engine decided.
+
+    Unrecognised controls are hidden unless ``verbose``. On a real page they are
+    cookie banners, nav widgets and search boxes, and they were roughly two
+    fifths of the output while being the rows the applicant can do least about.
+    """
     if not matches:
         return "No fillable controls were found on this page."
 
+    # Collapse before counting. An unused repeating row is not a pile of
+    # missing answers, so including it would inflate the summary and contradict
+    # the note that says those rows were skipped.
     matches, group_notes = _collapse_empty_group_rows(matches)
+    counted = matches
 
+    hidden = 0
+    if not verbose:
+        shown = [m for m in matches if m.status is not FillStatus.SKIPPED_NO_MATCH]
+        hidden = len(matches) - len(shown)
+        matches = shown
+
+    lines = [render_summary(counted), ""]
     header = f"  {'':6} {'FIELD':<34} {'MAPPED TO':<20} {'CONF':>5}  VALUE"
-    lines = [header, "  " + "-" * 92]
+    lines += [header, "  " + "-" * 92]
 
     for match in matches:
         label = STATUS_LABELS.get(match.status, "[?   ]")
@@ -114,11 +203,16 @@ def render_plan(matches: list[FieldMatch]) -> str:
 
     lines.append("")
     lines.extend(group_notes)
-    if group_notes:
+    if hidden:
+        lines.append(
+            f"  {hidden} unrecognised control(s) hidden "
+            "(cookie banners, nav, site search). Use --verbose to see them."
+        )
+    if group_notes or hidden:
         lines.append("")
     lines.append(
         "  [FILL] ready   [YOU ] your call   [GAP ] missing from resume   "
-        "[ n/a] not applicable   [----] unrecognised   * required"
+        "[ n/a] not applicable   * required"
     )
     return "\n".join(lines)
 

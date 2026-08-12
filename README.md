@@ -36,12 +36,16 @@ install.
 ## Configure
 
 ```bash
-cp .env.example .env
+resume-filler init
 ```
 
-Then edit `.env` and set at minimum `RESUME_PATH`. Credentials are only needed
-for sites that require a login before showing the form; applying through public
-ATS links needs no account. `.env` is gitignored. Never commit it.
+That finds your resume, checks it parses, writes `.env` and `profile.json`, and
+tells you what to run next. Press Enter through the prompts to take the
+defaults, or `--yes` to skip them entirely.
+
+**The tool never asks for a password.** Portals that need a sign in are handled
+by the `login` command, which opens a browser so you sign in yourself and keeps
+the session. Both `.env` and `profile.json` are gitignored.
 
 ## Use
 
