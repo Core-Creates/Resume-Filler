@@ -247,14 +247,21 @@ def fields_from_html(html: str) -> list[FormField]:
 _LABEL_SCRIPT = """
 const el = arguments[0];
 const clean = (s) => (s || '').replace(/\\s+/g, ' ').trim();
+// Resolve against the element's own root. For a control inside a shadow tree
+// that root is the shadow root, and querying `document` would find nothing,
+// because label associations do not cross the shadow boundary.
+const root = el.getRootNode ? el.getRootNode() : document;
+const byId = (id) => (root.getElementById
+  ? root.getElementById(id)
+  : root.querySelector(`#${CSS.escape(id)}`));
 if (el.id) {
-  const explicit = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+  const explicit = root.querySelector(`label[for="${CSS.escape(el.id)}"]`);
   if (explicit) return clean(explicit.innerText);
 }
 const labelledBy = el.getAttribute('aria-labelledby');
 if (labelledBy) {
   const parts = labelledBy.split(/\\s+/)
-    .map((id) => document.getElementById(id))
+    .map(byId)
     .filter(Boolean)
     .map((n) => clean(n.innerText));
   if (parts.length) return clean(parts.join(' '));
@@ -274,7 +281,26 @@ if (type === 'radio' || type === 'checkbox') {
 }
 const ancestor = el.closest('label');
 if (ancestor) return clean(ancestor.innerText);
-return legendText();
+const legend = legendText();
+if (legend) return legend;
+// Container search, mirroring _container_label in the static adapter. Many ATS
+// render a label as a styled div; Lever writes <div class="application-label">
+// for every custom question. Without this the live scan returns 14 unlabelled
+// required controls on a real Lever page while the static scan labels them all.
+let node = el;
+for (let depth = 0; depth < 4; depth++) {
+  const parent = node.parentElement;
+  if (!parent) break;
+  const candidates = parent.querySelectorAll('label, legend, [class*="label"]');
+  for (const candidate of candidates) {
+    const boundTo = candidate.getAttribute('for');
+    if (boundTo && boundTo !== el.id) continue;
+    const text = clean(candidate.innerText || candidate.textContent);
+    if (text) return text;
+  }
+  node = parent;
+}
+return '';
 """
 
 
@@ -301,13 +327,69 @@ def _is_combobox(element: Any, tag: str) -> bool:
     return (element.get_attribute("aria-haspopup") or "").lower() == "listbox"
 
 
+# Walks open shadow roots, which querySelectorAll cannot cross. Some ATS build
+# their controls as web components, and those fields are invisible to an ordinary
+# scan.
+#
+# Closed roots cannot be traversed and cannot even be counted: `host.shadowRoot`
+# is null for them, so a closed component is indistinguishable from an empty
+# one. Nothing here works around that, and no browser API allows it. A form
+# built entirely from closed components will simply report no fields, which the
+# caller surfaces rather than silently treating as an empty form.
+_SHADOW_SCAN_SCRIPT = """
+const selector = arguments[0];
+const maxDepth = arguments[1];
+const found = [];
+let tooDeep = 0;
+
+const walk = (root, depth) => {
+  if (depth > maxDepth) { tooDeep += 1; return; }
+  let matches = [];
+  try { matches = root.querySelectorAll(selector); } catch (e) { return; }
+  for (const el of matches) found.push(el);
+  let hosts = [];
+  try { hosts = root.querySelectorAll('*'); } catch (e) { return; }
+  for (const host of hosts) {
+    if (host.shadowRoot) walk(host.shadowRoot, depth + 1);
+  }
+};
+
+walk(document, 0);
+return [found, tooDeep];
+"""
+
+SHADOW_MAX_DEPTH = 5
+
+
+def _elements_in_context(driver: Any, selector: str) -> list[Any]:
+    """Find controls in this context, including inside open shadow roots.
+
+    Falls back to a plain query when the script cannot run, so a page that
+    blocks script execution still gets an ordinary scan rather than nothing.
+    """
+    from selenium.common.exceptions import WebDriverException
+    from selenium.webdriver.common.by import By
+
+    try:
+        found, too_deep = driver.execute_script(_SHADOW_SCAN_SCRIPT, selector, SHADOW_MAX_DEPTH)
+    except (WebDriverException, ValueError, TypeError):
+        logger.debug("Shadow-aware scan failed, falling back to a flat query", exc_info=True)
+        return list(driver.find_elements(By.CSS_SELECTOR, selector))
+
+    if too_deep:
+        logger.info(
+            "Stopped descending at %d shadow root(s) beyond depth %d", too_deep, SHADOW_MAX_DEPTH
+        )
+    return list(found or [])
+
+
 def _scan_context(driver: Any, path: tuple[int, ...]) -> list[FormField]:
     """Collect controls in the browsing context the driver is currently in."""
     from selenium.common.exceptions import StaleElementReferenceException, WebDriverException
     from selenium.webdriver.common.by import By
 
     fields: list[FormField] = []
-    for element in driver.find_elements(By.CSS_SELECTOR, CONTROL_SELECTOR):
+    for element in _elements_in_context(driver, CONTROL_SELECTOR):
         try:
             tag = element.tag_name.lower()
             field_type = (element.get_attribute("type") or "text").lower()

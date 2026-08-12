@@ -50,7 +50,13 @@ GRAD_YEAR_RE = re.compile(r"(?:19|20)\d{2}")
 DEGREE_RE = re.compile(
     r"\b(?:Ph\.?D|Doctorate|M\.?B\.?A|M\.?S\.?c?|M\.?A|Master(?:'s)?|B\.?S\.?c?|B\.?A|B\.?Eng"
     r"|Bachelor(?:'s)?|Associate(?:'s)?|A\.?A\.?S?)\b\.?"
-    r"(?:\s+of\s+[A-Z][A-Za-z]+)?",
+    # Up to three words after "of", so "Bachelor of Business Administration"
+    # survives instead of truncating to "Bachelor of Business". The connector
+    # exclusions matter because re.I makes [A-Z] match lowercase too, so without
+    # them "Master of Science in Computer Science" swallows the "in ..." clause,
+    # which belongs to the major rather than the degree.
+    r"(?:\s+of\s+(?!in\b|at\b|from\b|with\b)[A-Za-z]+"
+    r"(?:\s+(?!in\b|at\b|from\b|with\b)[A-Za-z]+){0,2})?",
     re.I,
 )
 SCHOOL_RE = re.compile(r"\b(University|College|Institute|Academy|School)\b", re.I)
@@ -58,24 +64,33 @@ SCHOOL_RE = re.compile(r"\b(University|College|Institute|Academy|School)\b", re.
 # Science" into a major of "Science in Computer Science".
 MAJOR_RE = re.compile(r"\bin\s+([A-Z][A-Za-z&]+(?:\s+(?:and\s+)?[A-Z][A-Za-z&]+)*)")
 
-# Heading text mapped to the canonical section key it opens.
-SECTION_ALIASES: dict[str, tuple[str, ...]] = {
-    "experience": (
-        "work experience",
-        "professional experience",
-        "employment history",
-        "experience",
-        "employment",
-        "work history",
-        "career history",
-        "relevant experience",
+# Section headings are matched on keywords rather than an exact alias list.
+# A real resume used "Career Experience" and "Technical Proficiencies", neither
+# of which an exact list anticipated, and the whole document collapsed into the
+# header block: zero positions, zero skills. Substring rules degrade gracefully
+# against wording nobody predicted.
+#
+# Order matters. "Academic Experience" should open education, not experience,
+# so education is tested first.
+SECTION_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("education", ("education", "academic")),
+    ("certifications", ("certification", "certificate", "license", "credential")),
+    ("projects", ("project",)),
+    (
+        "skills",
+        (
+            "skill",
+            "proficien",
+            "competenc",
+            "technolog",
+            "expertise",
+            "toolkit",
+            "qualification",
+        ),
     ),
-    "education": ("education", "academic background", "academic history"),
-    "skills": ("skills", "technical skills", "core competencies", "technologies", "expertise"),
-    "summary": ("summary", "profile", "objective", "about me", "professional summary"),
-    "projects": ("projects", "selected projects", "personal projects"),
-    "certifications": ("certifications", "licenses", "certificates"),
-}
+    ("experience", ("experience", "employment", "work history", "career", "background")),
+    ("summary", ("summary", "profile", "objective", "about me", "overview")),
+)
 
 # Words that mean a header line is a job title or a document label, not a name.
 _NOT_A_NAME = re.compile(
@@ -95,8 +110,11 @@ def _is_heading(line: str) -> str | None:
     stripped = line.strip()
     if not stripped or len(stripped) > 45:
         return None
+    # A bullet or a sentence-ending period means prose, not a heading.
+    if stripped[0] in "•-*●▪" or stripped.endswith((".", ",", ";")):
+        return None
     normalized = _normalize_heading(stripped)
-    if not normalized:
+    if not normalized or len(normalized.split()) > 5:
         return None
     # Headings are short, and are typically all caps, title case, or underlined.
     looks_like_heading = (
@@ -104,8 +122,8 @@ def _is_heading(line: str) -> str | None:
     )
     if not looks_like_heading:
         return None
-    for key, aliases in SECTION_ALIASES.items():
-        if normalized in aliases:
+    for key, keywords in SECTION_KEYWORDS:
+        if any(keyword in normalized for keyword in keywords):
             return key
     return None
 
@@ -125,6 +143,22 @@ def split_sections(text: str) -> dict[str, list[str]]:
     return sections
 
 
+def _strip_contact_details(line: str) -> str:
+    """Remove email, phone, URLs and separators, leaving any prose behind.
+
+    Real resumes routinely put everything on one line:
+    "Corrina Ray Alcoser  corrinaalcoser@example.com | (210) 555-0100".
+    Rejecting any line containing an "@" or a digit misses the name entirely.
+    """
+    cleaned = EMAIL_RE.sub(" ", line)
+    cleaned = re.sub(r"https?://\S+|www\.\S+", " ", cleaned)
+    cleaned = PHONE_RE.sub(" ", cleaned)
+    # Commas are deliberately preserved: the caller splits on them to drop
+    # credential suffixes, so "Jane Doe, PhD" must keep its comma.
+    cleaned = re.sub(r"[|•·●]+", " ", cleaned)
+    return " ".join(cleaned.split()).strip()
+
+
 def extract_name(header_lines: list[str]) -> tuple[str, str]:
     """Find the candidate's name in the header block.
 
@@ -133,7 +167,7 @@ def extract_name(header_lines: list[str]) -> tuple[str, str]:
     title casing them.
     """
     for line in header_lines[:10]:
-        candidate = line.strip()
+        candidate = _strip_contact_details(line)
         if not candidate or len(candidate) > 60:
             continue
         if "@" in candidate or "http" in candidate.lower() or any(c.isdigit() for c in candidate):
@@ -275,6 +309,56 @@ def infer_country(data: ResumeData) -> str:
     return ""
 
 
+_JOB_TITLE_WORDS = re.compile(
+    r"\b(engineer|developer|manager|analyst|scientist|designer|consultant|director"
+    r"|architect|administrator|specialist|intern|lead|principal|staff|senior|junior"
+    r"|associate|officer|technician|coordinator|supervisor|president|founder|head"
+    r"|programmer|researcher|instructor|professor|assistant|clerk|advisor"
+    r"|support|operator|representative|trainer|writer|editor|strategist|tester)\b",
+    re.I,
+)
+
+
+def _is_plausible_line(line: str) -> bool:
+    """Short, non-bullet, non-sentence. Shared precondition for both checks."""
+    text = line.strip()
+    if not text or len(text) > 70:
+        return False
+    return not (text[0] in "•-*●▪" or text.endswith((".", ":", ";")))
+
+
+def _is_role_title(line: str) -> bool:
+    """Strict: does this name an actual role?
+
+    Used to judge text sitting on the date line itself, where the alternative is
+    an employer name. "USAF A1VDC" and "AT&T Corporate Office" are short and
+    capitalised, so a loose test calls them titles and swaps the two fields.
+    Only an explicit role word is trusted here.
+    """
+    return _is_plausible_line(line) and bool(_JOB_TITLE_WORDS.search(line))
+
+
+def _could_be_title(line: str) -> bool:
+    """Loose: could this line be the role title?
+
+    Used only for the line directly adjacent to a date range, where a resume
+    almost always puts the title, so the bar is lower. A keyword list alone is
+    endless whack-a-mole; "Tier 3 IT Support (Insight Global Contractor)" is
+    plainly a title and contains no obvious role noun.
+    """
+    if not _is_plausible_line(line):
+        return False
+    if _JOB_TITLE_WORDS.search(line):
+        return True
+
+    words = line.split()
+    if not 1 < len(words) <= 9:
+        return False
+    # Prose starts with a verb and runs lowercase; a title is mostly capitalised.
+    capitalised = sum(1 for word in words if word[:1].isupper() or word[:1].isdigit())
+    return capitalised >= len(words) * 0.6
+
+
 def extract_positions(lines: list[str]) -> list[Position]:
     """Parse the experience section into individual roles.
 
@@ -291,14 +375,31 @@ def extract_positions(lines: list[str]) -> list[Position]:
 
         remainder = (line[: match.start()] + " " + line[match.end() :]).strip(" ,|•-\t")
         previous = lines[index - 1].strip(" ,|•-\t") if index > 0 else ""
+        following = lines[index + 1].strip(" ,|•-\t") if index + 1 < len(lines) else ""
 
         parts = [p.strip() for p in re.split(r"\s*[,|]\s*|\s{2,}|\s+at\s+", remainder) if p.strip()]
         title, company = "", ""
         if len(parts) >= 2:
-            title, company = parts[0], parts[1]
+            # One resume can mix both layouts:
+            #   "Employer, City, State      Dates"  with the title on the next line
+            #   "Title, Employer            Dates"  with everything on one line
+            # Deciding by whether the first part reads as a role handles both,
+            # rather than assuming a fixed column order.
+            if not _is_role_title(parts[0]) and _could_be_title(following):
+                company, title = parts[0], following
+            else:
+                title, company = parts[0], parts[1]
         elif len(parts) == 1:
-            title = parts[0]
-            company = previous
+            # "ManTech, San Antonio, Texas   Jul 2021 to May 2022" with the job
+            # title on the line below is a common layout, and reading the title
+            # from the line above gets the previous role's bullet instead.
+            company = parts[0]
+            if _could_be_title(following):
+                title = following
+            elif _could_be_title(previous):
+                title = previous
+            else:
+                title, company = company, previous
         elif previous:
             title = previous
 
@@ -400,6 +501,51 @@ def parse_resume_text(text: str) -> ResumeData:
     return data
 
 
+# English prose runs roughly one space every six characters. Far below that and
+# the PDF's character spacing has defeated the default word-splitting tolerance,
+# yielding "SanAntonio,TX" and "Jul2021". Every downstream regex then fails.
+MIN_SPACE_RATIO = 0.10
+NARROW_WORD_TOLERANCE = 1.5
+
+
+def _space_ratio(text: str) -> float:
+    if not text:
+        return 0.0
+    return text.count(" ") / len(text)
+
+
+def _extract_pdf_text(path: Path) -> str:
+    """Pull text from a PDF, retrying with tighter word splitting if needed.
+
+    pdfplumber's default x_tolerance of 3 merges adjacent words in some PDFs,
+    notably ones exported from Word. The retry is only paid for when the first
+    pass looks broken, and the result is kept only if it is genuinely better.
+    """
+    import pdfplumber
+
+    def _read(**kwargs: object) -> str:
+        pages: list[str] = []
+        with pdfplumber.open(str(path)) as pdf:
+            for page in pdf.pages:
+                content = page.extract_text(**kwargs)
+                if content:
+                    pages.append(content)
+        return "\n".join(pages)
+
+    text = _read()
+    if _space_ratio(text) >= MIN_SPACE_RATIO:
+        return text
+
+    logger.info(
+        "Word spacing in %s looks collapsed (%.3f spaces per character); "
+        "re-extracting with a tighter tolerance",
+        path.name,
+        _space_ratio(text),
+    )
+    retried = _read(x_tolerance=NARROW_WORD_TOLERANCE)
+    return retried if _space_ratio(retried) > _space_ratio(text) else text
+
+
 def parse_resume(resume_path: str | Path) -> ResumeData:
     """Extract structured data from a PDF resume.
 
@@ -411,16 +557,7 @@ def parse_resume(resume_path: str | Path) -> ResumeData:
     if not path.is_file():
         raise FileNotFoundError(f"Resume not found: {path}")
 
-    import pdfplumber
-
-    pages: list[str] = []
-    with pdfplumber.open(str(path)) as pdf:
-        for page in pdf.pages:
-            content = page.extract_text()
-            if content:
-                pages.append(content)
-
-    text = "\n".join(pages)
+    text = _extract_pdf_text(path)
     if not text.strip():
         raise ValueError(
             f"No extractable text in {path.name}. If this is a scanned resume, "

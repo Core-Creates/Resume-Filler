@@ -37,6 +37,127 @@ def lever_html() -> str:
     return (FIXTURES / "lever_form.html").read_text(encoding="utf-8")
 
 
+class TestShadowDom:
+    """Controls inside web components are invisible to an ordinary query.
+
+    Verified in a real headless browser against a page with an open root, a root
+    nested two levels deep, and a closed root: the first two were found with
+    their labels, the closed one correctly was not. These tests pin the
+    behaviour that browser run confirmed.
+    """
+
+    def test_scan_descends_into_shadow_roots(self) -> None:
+        from resume_filler.extractors import _SHADOW_SCAN_SCRIPT
+
+        assert "shadowRoot" in _SHADOW_SCAN_SCRIPT
+        assert "walk(" in _SHADOW_SCAN_SCRIPT, "the recursive descent is missing"
+
+    def test_scan_is_depth_bounded(self) -> None:
+        """An unbounded walk on a deeply nested component tree can hang."""
+        from resume_filler.extractors import _SHADOW_SCAN_SCRIPT, SHADOW_MAX_DEPTH
+
+        assert "maxDepth" in _SHADOW_SCAN_SCRIPT
+        assert SHADOW_MAX_DEPTH >= 1
+
+    def test_labels_resolve_against_the_elements_own_root(self) -> None:
+        """label[for=] does not cross the shadow boundary, so querying document
+        finds nothing for a control inside a shadow tree."""
+        from resume_filler.extractors import _LABEL_SCRIPT
+
+        assert "getRootNode" in _LABEL_SCRIPT
+        assert "document.querySelector(`label" not in _LABEL_SCRIPT
+
+    def test_falls_back_to_a_flat_query_when_script_execution_fails(self) -> None:
+        """A page that blocks scripts must still get an ordinary scan."""
+        from selenium.common.exceptions import WebDriverException
+
+        from resume_filler.extractors import _elements_in_context
+
+        sentinel = [object(), object()]
+
+        class BlockedDriver:
+            def execute_script(self, *args):
+                raise WebDriverException("blocked")
+
+            def find_elements(self, by, selector):
+                return sentinel
+
+        assert _elements_in_context(BlockedDriver(), "input") == sentinel
+
+    def test_uses_the_script_result_when_it_succeeds(self) -> None:
+        from resume_filler.extractors import _elements_in_context
+
+        sentinel = [object()]
+
+        class Driver:
+            def execute_script(self, *args):
+                return [sentinel, 0]
+
+            def find_elements(self, by, selector):
+                raise AssertionError("should not fall back")
+
+        assert _elements_in_context(Driver(), "input") == sentinel
+
+    def test_malformed_script_result_falls_back_rather_than_crashing(self) -> None:
+        from resume_filler.extractors import _elements_in_context
+
+        class OddDriver:
+            def execute_script(self, *args):
+                return None  # older drivers have returned odd shapes here
+
+            def find_elements(self, by, selector):
+                return ["fallback"]
+
+        assert _elements_in_context(OddDriver(), "input") == ["fallback"]
+
+
+class TestAdapterParity:
+    """The static and live adapters must resolve labels the same way.
+
+    They drifted once already. The container search that reads label-like divs
+    was added to the BeautifulSoup adapter only, and because every unit test
+    goes through that adapter, nothing caught it. A live run against Lever
+    returned 14 unlabelled required controls that the static scan labelled
+    correctly.
+
+    These are canaries, not proofs. Only a browser can truly verify the script,
+    but a canary fails loudly when someone edits one adapter and not the other.
+    """
+
+    def test_label_script_implements_the_container_search(self) -> None:
+        from resume_filler.extractors import _LABEL_SCRIPT
+
+        assert '[class*="label"]' in _LABEL_SCRIPT, (
+            "the live adapter must recognise label-like divs, as the static one does"
+        )
+        assert "parentElement" in _LABEL_SCRIPT, "the container walk is missing"
+
+    def test_label_script_covers_every_static_strategy(self) -> None:
+        from resume_filler.extractors import _LABEL_SCRIPT
+
+        for strategy in ("label[for=", "aria-labelledby", "closest('label')", "legend"):
+            assert strategy in _LABEL_SCRIPT, f"live adapter is missing {strategy}"
+
+    def test_both_adapters_share_one_control_selector(self) -> None:
+        """A shared selector is what stops them disagreeing on what a control is."""
+        import inspect
+
+        from resume_filler import extractors
+
+        static_src = inspect.getsource(extractors.fields_from_html)
+        live_src = inspect.getsource(extractors._scan_context)
+        assert "CONTROL_SELECTOR" in static_src
+        assert "CONTROL_SELECTOR" in live_src
+
+    def test_both_adapters_skip_decorative_controls(self) -> None:
+        import inspect
+
+        from resume_filler import extractors
+
+        for func in (extractors.fields_from_html, extractors._scan_context):
+            assert "_is_decorative" in inspect.getsource(func)
+
+
 class TestRealLeverMarkup:
     """Regressions found by running the engine against a live Lever page."""
 
