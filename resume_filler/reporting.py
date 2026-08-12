@@ -122,6 +122,58 @@ def render_plan(matches: list[FieldMatch]) -> str:
     return "\n".join(lines)
 
 
+# Below this many controls, a page is almost certainly not the application form.
+SPARSE_SCAN_THRESHOLD = 6
+
+_WIZARD_MARKERS = (
+    "items to complete",
+    "application tasks",
+    "save and close",
+    "continue",
+    "next step",
+    "step 1 of",
+)
+
+
+def diagnose_sparse_scan(html: str, field_count: int) -> str:
+    """Explain a nearly empty scan instead of leaving the user guessing.
+
+    A saved page can legitimately contain no form. Modern application portals
+    are single-page apps that render one step at a time, so saving the landing
+    step captures a task list and nothing else. Reporting "4 controls, none
+    matched" with no explanation looks like the tool is broken when it is
+    working correctly.
+    """
+    if field_count >= SPARSE_SCAN_THRESHOLD:
+        return ""
+
+    lowered = html.lower()
+    notes = [
+        f"  Only {field_count} fillable control(s) were found, "
+        "which is too few to be an application form."
+    ]
+
+    hits = [marker for marker in _WIZARD_MARKERS if marker in lowered]
+    if hits:
+        notes.append(
+            "  This looks like one step of a multi-step application "
+            f"(the page mentions {', '.join(repr(h) for h in hits[:3])})."
+        )
+        notes.append(
+            "  Open the step that actually contains the fields, save that page, "
+            "and inspect it instead."
+        )
+    if lowered.count("<script") > 20:
+        notes.append(
+            "  The page is a JavaScript application. Saving it before the form "
+            "renders captures only the shell."
+        )
+    notes.append(
+        "  To let a browser render and step through it instead, use: inspect --url <the live URL>"
+    )
+    return "\n".join(notes)
+
+
 def render_result(result: ApplicationResult) -> str:
     posting = result.posting
     title = posting.title or posting.url

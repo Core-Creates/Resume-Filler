@@ -81,6 +81,55 @@ class TestSavedPostings:
             sources.from_html_file(tmp_path / "nope.html")
 
 
+class TestSparseScanDiagnostic:
+    """A saved page can legitimately contain no form.
+
+    Modern portals are single-page apps that render one step at a time, so
+    saving the landing step captures a task list and nothing else. Reporting
+    "4 controls, none matched" with no explanation looks like the tool is
+    broken when it is working correctly.
+    """
+
+    WIZARD_SHELL = """<html><body>
+      <h1>Application Tasks</h1>
+      <p>Items to Complete</p>
+      <ul><li>Instructions</li><li>Contact Information</li><li>Education</li></ul>
+      <label>* I Agree</label><input type="checkbox">
+      <button>Save and Close</button><button>Continue</button>
+    </body></html>"""
+
+    def test_a_full_form_gets_no_diagnostic(self, greenhouse_html: str) -> None:
+        from resume_filler.reporting import diagnose_sparse_scan
+
+        assert diagnose_sparse_scan(greenhouse_html, 25) == ""
+
+    def test_a_sparse_page_is_explained(self) -> None:
+        from resume_filler.reporting import diagnose_sparse_scan
+
+        hint = diagnose_sparse_scan(self.WIZARD_SHELL, 1)
+        assert "too few to be an application form" in hint
+
+    def test_a_wizard_shell_is_identified_as_such(self) -> None:
+        from resume_filler.reporting import diagnose_sparse_scan
+
+        hint = diagnose_sparse_scan(self.WIZARD_SHELL, 1)
+        assert "one step of a multi-step application" in hint
+        assert "application tasks" in hint
+
+    def test_the_diagnostic_says_what_to_do_next(self) -> None:
+        from resume_filler.reporting import diagnose_sparse_scan
+
+        hint = diagnose_sparse_scan(self.WIZARD_SHELL, 1)
+        assert "save that page" in hint
+        assert "inspect --url" in hint
+
+    def test_a_javascript_shell_is_called_out(self) -> None:
+        from resume_filler.reporting import diagnose_sparse_scan
+
+        html = "<html><body>" + ("<script src='a.js'></script>" * 30) + "</body></html>"
+        assert "JavaScript application" in diagnose_sparse_scan(html, 2)
+
+
 class TestUnfinishedDegrees:
     """An unfinished degree must never be written onto a form as complete."""
 

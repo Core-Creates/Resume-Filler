@@ -23,6 +23,7 @@ from .field_map import plan_fill
 from .logging_setup import configure_logging
 from .models import ApplicationResult, ApplicationStatus, JobPosting
 from .reporting import (
+    diagnose_sparse_scan,
     render_plan,
     render_result,
     render_resume_summary,
@@ -152,6 +153,10 @@ def command_inspect(args: argparse.Namespace, settings: Settings) -> int:
         )
         print(f"\nFill plan for {args.html}")
         print(render_plan(matches))
+        hint = diagnose_sparse_scan(html, len(fields))
+        if hint:
+            print()
+            print(hint)
         return 0
 
     from .browser import managed_driver
