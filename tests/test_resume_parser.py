@@ -69,6 +69,23 @@ class TestContactExtraction:
         assert "linkedin.com" not in data.portfolio_url
         assert "github.com" not in data.portfolio_url
 
+    @pytest.mark.parametrize(
+        "header",
+        [
+            "Austin, TX 78701",
+            "San Antonio, TX, 78240",
+            "San Antonio, TX,78240",
+            "Austin, TX  78701-1234",
+        ],
+    )
+    def test_postal_code_survives_either_separator(self, header: str) -> None:
+        """A comma before the zip is as common as a space, and requiring
+        whitespace left a required Zip field empty on real applications."""
+        data = parse_resume_text(f"Ada Lovelace\n{header}\nada@example.com\n")
+        assert data.city in {"Austin", "San Antonio"}
+        assert data.state == "TX"
+        assert data.postal_code.startswith(("78701", "78240"))
+
     def test_year_range_is_not_mistaken_for_a_phone_number(self) -> None:
         data = parse_resume_text("Ada Lovelace\nWorked 2015 2018 2021\n")
         assert data.phone == ""

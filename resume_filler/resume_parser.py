@@ -31,8 +31,12 @@ GITHUB_RE = re.compile(r"(?:https?://)?(?:www\.)?github\.com/[A-Za-z0-9\-_.]+/?"
 URL_RE = re.compile(r"(?<![@\w])(?:https?://)?(?:www\.)?[A-Za-z0-9\-]+\.[A-Za-z]{2,}(?:/[^\s,;]*)?")
 # Horizontal whitespace only. Allowing \s here let a city match run backwards
 # across newlines and swallow the name and job title above it.
+# The separator before the postal code may be a comma as well as whitespace.
+# "San Antonio, TX, 78240" is as common as "Austin, TX 78701", and requiring
+# whitespace dropped the zip on the comma form, leaving a required field empty.
 LOCATION_RE = re.compile(
-    r"([A-Z][A-Za-z.\-]+(?:[ \t][A-Z][A-Za-z.\-]+)*),[ \t]*([A-Z]{2})\b(?:[ \t]+(\d{5}(?:-\d{4})?))?"
+    r"([A-Z][A-Za-z.\-]+(?:[ \t][A-Z][A-Za-z.\-]+)*),[ \t]*([A-Z]{2})\b"
+    r"(?:[ \t,]+(\d{5}(?:-\d{4})?))?"
 )
 
 _MONTH = r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?"
@@ -60,6 +64,12 @@ DEGREE_RE = re.compile(
     re.I,
 )
 SCHOOL_RE = re.compile(r"\b(University|College|Institute|Academy|School)\b", re.I)
+# An unfinished degree must never be reported as complete.
+IN_PROGRESS_RE = re.compile(
+    r"\((?:in\s*progress|ongoing|current)\)|\b(?:in\s*progress|expected|anticipated"
+    r"|pursuing|candidate\s+for)\b",
+    re.I,
+)
 # Only "in", never "of". Matching "of" turned "Master of Science in Computer
 # Science" into a major of "Science in Computer Science".
 MAJOR_RE = re.compile(r"\bin\s+([A-Z][A-Za-z&]+(?:\s+(?:and\s+)?[A-Z][A-Za-z&]+)*)")
@@ -474,6 +484,8 @@ def extract_education(lines: list[str]) -> list[Education]:
             current = Education()
             entries.append(current)
 
+        if IN_PROGRESS_RE.search(line):
+            current.in_progress = True
         if degree_match and not current.degree:
             current.degree = degree_match.group(0).strip(". ")
         if school and not current.school:

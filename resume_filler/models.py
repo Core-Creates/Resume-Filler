@@ -56,6 +56,20 @@ class Education:
     degree: str = ""
     major: str = ""
     graduation_year: str = ""
+    in_progress: bool = False
+    """True when the resume marks the degree unfinished.
+
+    Dropping this turns "Bachelor of Business Administration (In Progress)" into
+    a completed degree, which would overstate the applicant's credentials on
+    every form the tool fills. Never discard it.
+    """
+
+    @property
+    def degree_display(self) -> str:
+        """The degree as it may safely be written onto an application."""
+        if self.degree and self.in_progress:
+            return f"{self.degree} (In Progress)"
+        return self.degree
 
 
 @dataclass
@@ -126,6 +140,14 @@ class FormField:
     aria_label: str = ""
     placeholder: str = ""
     autocomplete: str = ""
+    accept: str = ""
+    """The file types a file input will take.
+
+    Decisive in both directions. An input accepting only images cannot be a
+    resume upload however its label reads, and an unlabelled input accepting
+    ".pdf,.doc,.docx" almost certainly is one.
+    """
+
     required: bool = False
     options: list[str] = field(default_factory=list)
     group: str = ""

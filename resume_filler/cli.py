@@ -23,6 +23,7 @@ from .field_map import plan_fill
 from .logging_setup import configure_logging
 from .models import ApplicationResult, ApplicationStatus, JobPosting
 from .reporting import (
+    diagnose_sparse_scan,
     render_plan,
     render_result,
     render_resume_summary,
@@ -85,6 +86,9 @@ def build_parser() -> argparse.ArgumentParser:
     tailor_origin.add_argument("--greenhouse", help="Greenhouse board token.")
     tailor_origin.add_argument("--lever", help="Lever company slug.")
     tailor_origin.add_argument("--csv", help="CSV with url and description columns.")
+    tailor_origin.add_argument(
+        "--html", help="A job posting saved from the browser. Works for any ATS."
+    )
     tailor_cmd.add_argument("--resume", help="Path to the resume PDF.")
     tailor_cmd.add_argument("--keywords", nargs="*", help="Only keep postings matching these.")
     tailor_cmd.add_argument("--location", default="", help="Only keep postings in this location.")
@@ -136,8 +140,11 @@ def command_inspect(args: argparse.Namespace, settings: Settings) -> int:
     print(render_resume_summary(resume))
 
     if args.html:
-        html = Path(args.html).expanduser().read_text(encoding="utf-8", errors="replace")
-        fields = fields_from_html(html)
+        saved_page = Path(args.html).expanduser()
+        html = saved_page.read_text(encoding="utf-8", errors="replace")
+        # base_path lets the scan follow iframes into their saved companion
+        # files, which is the whole form on an iCIMS page.
+        fields = fields_from_html(html, base_path=saved_page)
         matches = plan_fill(
             fields,
             resume,
@@ -146,6 +153,10 @@ def command_inspect(args: argparse.Namespace, settings: Settings) -> int:
         )
         print(f"\nFill plan for {args.html}")
         print(render_plan(matches))
+        hint = diagnose_sparse_scan(html, len(fields))
+        if hint:
+            print()
+            print(hint)
         return 0
 
     from .browser import managed_driver
@@ -169,6 +180,11 @@ def command_inspect(args: argparse.Namespace, settings: Settings) -> int:
 def _load_postings(args: argparse.Namespace) -> list[JobPosting]:
     from . import sources
 
+    if getattr(args, "html", None):
+        postings = sources.from_html_file(args.html)
+        return sources.filter_postings(
+            postings, keywords=getattr(args, "keywords", None), location=args.location
+        )
     if args.urls:
         postings = sources.from_urls_file(args.urls)
     elif args.csv:
