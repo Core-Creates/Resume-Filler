@@ -31,6 +31,29 @@ class FillStatus(str, Enum):
     FAILED = "failed"
 
 
+class RunMode(str, Enum):
+    """How far a run is allowed to go.
+
+    There used to be only two: type nothing, or type everything and submit.
+    Neither is what a careful applicant wants, so all the filling logic never
+    saved anyone a keystroke. FILL is the middle: the form is completed and then
+    handed over for the human to check and send.
+    """
+
+    PREVIEW = "preview"
+    """Read the form and report. Nothing is typed."""
+
+    FILL = "fill"
+    """Complete the form and stop. Never submits."""
+
+    SUBMIT = "submit"
+    """Complete the form and send it, if nothing required is missing."""
+
+    @property
+    def types_anything(self) -> bool:
+        return self is not RunMode.PREVIEW
+
+
 class ApplicationStatus(str, Enum):
     """Outcome of attempting a full job application."""
 

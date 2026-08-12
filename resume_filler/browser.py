@@ -82,6 +82,40 @@ def build_driver(
     return driver
 
 
+def explain_driver_failure(exc: Exception, browser: str) -> str:
+    """Turn a Selenium stack trace into a sentence and a next step.
+
+    These three account for almost every failure to start: the browser is not
+    installed, another window already owns the session directory, or the machine
+    is offline while Selenium Manager tries to fetch a driver. A raw
+    WebDriverException tells the applicant none of that.
+    """
+    message = str(exc).lower()
+
+    if (
+        "user data directory is already in use" in message
+        or "profile appears to be in use" in message
+    ):
+        return (
+            f"That session directory is already open in another {browser} window.\n"
+            f"Close every {browser} window and run this again."
+        )
+    if "unable to locate" in message or "cannot find" in message or "no such file" in message:
+        others = " or ".join(b for b in ("chrome", "edge", "firefox") if b != browser)
+        return (
+            f"{browser.title()} does not appear to be installed, or could not be found.\n"
+            f"Install it, or use --browser with {others}."
+        )
+    if "err_name_not_resolved" in message or "err_internet_disconnected" in message:
+        return "That address could not be reached. Check the URL and your connection."
+    if "unable to obtain" in message or "could not start a new session" in message:
+        return (
+            f"Could not start {browser}. It may be mid-update, or a driver download\n"
+            "may have failed. Try again, or use --browser with a different one."
+        )
+    return ""
+
+
 @contextmanager
 def managed_driver(
     browser: str = "chrome",
