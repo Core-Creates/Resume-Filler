@@ -39,6 +39,9 @@ MANIFEST
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
+# ...except our build recipe, which is the one file anyone else needs in order
+# to produce the executable. The blanket rule above is for generated specs.
+!resume-filler.spec
 
 # Installer logs
 pip-log.txt
