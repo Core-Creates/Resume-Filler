@@ -124,6 +124,42 @@ Postings come back ranked by keyword coverage, best fit first:
 python -m resume_filler export applications.csv
 ```
 
+## Your profile: the answers a resume cannot give
+
+Every form asks for things no resume contains. A street address is required
+almost everywhere and appears on no CV. So are work authorization, salary
+expectations, and where you heard about the role.
+
+```bash
+cp profile.example.json profile.json
+```
+
+Keys are the canonical field names the plan prints in its **MAPPED TO** column,
+so when a field reports a gap the plan tells you exactly which key to add:
+
+```
+[GAP ] *Address    address_line1   1.00   Not in your resume.
+                                          Add "address_line1" to your profile file.
+```
+
+```json
+{
+  "address_line1": "123 Example Street",
+  "work_authorization": "Yes",
+  "how_did_you_hear": "LinkedIn"
+}
+```
+
+`profile.json` is gitignored. Never commit it.
+
+**A value here can answer a question the engine otherwise refuses to touch**,
+such as work authorization. That is deliberate and is not a hole in the policy.
+The policy exists so the tool never invents an answer to a legal declaration or
+a negotiation. An answer you wrote yourself is not invented, and the plan labels
+it `From your profile.` so it stays visible.
+
+Anything you leave blank is still reported rather than guessed.
+
 ## Handling real ATS pages
 
 Three things that break naive form automation are handled explicitly:

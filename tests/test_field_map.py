@@ -202,7 +202,7 @@ class TestPlanFill:
         matches = {m.canonical: m for m in plan_fill(fields_from_html(tricky_html), empty)}
         assert matches["email"].status is FillStatus.SKIPPED_NO_VALUE
         assert matches["email"].value == ""
-        assert "did not supply" in matches["email"].reason
+        assert "Not in your resume" in matches["email"].reason
 
     def test_threshold_controls_aggressiveness(self, tricky_html: str, resume) -> None:
         fields = fields_from_html(tricky_html)

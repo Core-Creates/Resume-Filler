@@ -1,0 +1,31 @@
+{
+  "_comment": [
+    "Copy this to profile.json and fill in what applies. profile.json is gitignored.",
+    "Keys are the canonical field names the fill plan prints in its MAPPED TO column,",
+    "so when a field reports a gap, the plan tells you which key to add here.",
+    "Delete any key you would rather answer by hand; an absent key is simply reported.",
+    "",
+    "Values here can answer questions the engine otherwise refuses to touch, such as",
+    "work authorization or desired salary. That is intentional: the tool will not",
+    "invent an answer to a legal declaration, but an answer you wrote yourself is",
+    "your own. The plan marks these 'From your profile.' so it stays visible."
+  ],
+
+  "address_line1": "123 Example Street",
+  "city": "San Antonio",
+  "state": "TX",
+  "postal_code": "78240",
+  "country": "United States",
+
+  "portfolio_url": "",
+  "linkedin_url": "",
+  "github_url": "",
+
+  "work_authorization": "Yes",
+  "sponsorship": "No",
+
+  "desired_salary": "",
+  "how_did_you_hear": "LinkedIn",
+
+  "years_experience": "7"
+}
